@@ -1,0 +1,16 @@
+*.iml
+.gradle/
+.kotlin/
+local.properties
+.idea/
+.DS_Store
+build/
+captures/
+.externalNativeBuild
+.cxx
+*.apk
+*.aab
+
+# 本地工具 / agent 配置，与工程构建无关
+.reasonix/
+reasonix.toml

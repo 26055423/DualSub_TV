@@ -1,0 +1,327 @@
+package com.dualsub.tv.ui.network
+
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.tv.material3.Button
+import androidx.tv.material3.Card
+import androidx.tv.material3.ExperimentalTvMaterial3Api
+import androidx.tv.material3.Text
+import com.dualsub.tv.core.AppServices
+import com.dualsub.tv.media.VideoItem
+import com.dualsub.tv.network.RemoteLocation
+import com.dualsub.tv.network.RemoteType
+import com.dualsub.tv.network.dlna.DlnaDevice
+import kotlinx.coroutines.launch
+
+/** 表单当前要处理的对象。 */
+private sealed interface FormMode {
+    data object Closed : FormMode
+
+    /** 新增；[host] 来自局域网扫描结果时预填主机名。 */
+    data class Create(val host: String?) : FormMode
+
+    /** 编辑已有条目 —— 改 IP、改密码、换共享都走这里。 */
+    data class Edit(val location: RemoteLocation) : FormMode
+}
+
+/**
+ * 「网络位置」：管理 SMB / DLNA 服务器，并进入目录浏览。
+ *
+ * 浏览到的位置会即时登记到 [AppServices.smbRegistry] —— 播放器只拿到 `smb://host/...`
+ * 这样的地址，账号密码必须靠这个注册表按主机反查。
+ *
+ * 注意列表项一律**整卡可点击**，不再在卡内放按钮：TV 上卡片本身就是可聚焦的，
+ * 焦点落在卡片上而卡片的 onClick 为空时，按确认键会「没反应」——这正是最容易被误判为
+ * 「按钮坏了」的情况。
+ */
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+fun NetworkScreen(
+    services: AppServices,
+    onOpenVideo: (VideoItem) -> Unit,
+    onExit: () -> Unit
+) {
+    val scope = rememberCoroutineScope()
+    var locations by remember { mutableStateOf<List<RemoteLocation>>(emptyList()) }
+    var browsing by remember { mutableStateOf<RemoteLocation?>(null) }
+    var form by remember { mutableStateOf<FormMode>(FormMode.Closed) }
+    var busy by remember { mutableStateOf(false) }
+    var discoveredDlna by remember { mutableStateOf<List<DlnaDevice>>(emptyList()) }
+    var discoveredSmb by remember { mutableStateOf<List<String>>(emptyList()) }
+    var message by remember { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(Unit) {
+        services.settings.remoteLocations().collect { list ->
+            locations = list
+            services.smbRegistry.registerAll(list)
+        }
+    }
+
+    val current = browsing
+    if (current != null) {
+        RemoteBrowseScreen(
+            services = services,
+            location = current,
+            onOpenVideo = onOpenVideo,
+            onExit = { browsing = null }
+        )
+        return
+    }
+
+    BackHandler {
+        if (form != FormMode.Closed) form = FormMode.Closed else onExit()
+    }
+
+    fun persistAll(updated: List<RemoteLocation>) {
+        locations = updated
+        services.smbRegistry.registerAll(updated)
+        scope.launch { services.settings.saveRemoteLocations(updated) }
+    }
+
+    fun openDlna(device: DlnaDevice) {
+        val location = RemoteLocation(
+            id = "dlna:${device.descriptionUrl}",
+            type = RemoteType.DLNA,
+            displayName = device.friendlyName,
+            host = device.host,
+            descriptionUrl = device.descriptionUrl,
+            controlUrl = device.controlUrl
+        )
+        persistAll(locations.filterNot { it.id == location.id } + location)
+        discoveredDlna = discoveredDlna.filterNot { it.descriptionUrl == device.descriptionUrl }
+        browsing = location
+    }
+
+    // 表单打开时不渲染背后的列表 —— 否则两者都在焦点遍历树里，
+    // 方向键会把焦点移到被盖住的列表项上（真机上表现为「焦点跑到下一层」）。
+    val mode = form
+    when (mode) {
+        FormMode.Closed -> Unit
+
+        is FormMode.Create -> {
+            SmbServerForm(
+                services = services,
+                title = "添加 SMB 服务器",
+                initial = mode.host?.let {
+                    RemoteLocation(id = "", type = RemoteType.SMB, displayName = it, host = it)
+                },
+                onCancel = { form = FormMode.Closed },
+                onSave = { location ->
+                    persistAll(locations.filterNot { it.id == location.id } + location)
+                    form = FormMode.Closed
+                    browsing = location
+                }
+            )
+            return
+        }
+
+        is FormMode.Edit -> {
+            SmbServerForm(
+                services = services,
+                title = "编辑 SMB 服务器",
+                initial = mode.location,
+                onCancel = { form = FormMode.Closed },
+                onSave = { location ->
+                    // 主机或共享改了，id 会变，所以按旧 id 定位替换
+                    persistAll(locations.map { if (it.id == mode.location.id) location else it })
+                    // 凭据/主机可能已变，丢掉旧连接，避免继续用错密码
+                    services.smbPool.invalidate(mode.location.host)
+                    form = FormMode.Closed
+                }
+            )
+            return
+        }
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color(0xFF0B0E16))
+            .padding(horizontal = 40.dp, vertical = 28.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Text(text = "网络位置", fontSize = 28.sp, fontWeight = FontWeight.Bold)
+        Text(
+            text = "支持 SMB 共享（Windows / NAS）与 DLNA 媒体服务器。密码以明文保存在应用私有目录。",
+            fontSize = 13.sp,
+            color = Color(0xFF90A4AE)
+        )
+
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Button(
+                onClick = {
+                    // 按本机网段预填前三位（如 `192.168.1.`），用户补最后一段即可；
+                    // 取不到网络信息时留空，让用户自己填完整地址。
+                    val prefix = services.smbDiscovery.localSubnetPrefix()
+                    form = FormMode.Create(prefix.ifEmpty { null })
+                }
+            ) { Text("添加 SMB 服务器", fontSize = 14.sp) }
+            Button(
+                onClick = {
+                    busy = true
+                    discoveredSmb = emptyList()
+                    message = "正在扫描局域网（约 5~10 秒）…"
+                    scope.launch {
+                        val hosts = services.smbDiscovery.scan()
+                        discoveredSmb = hosts
+                        busy = false
+                        message = if (hosts.isEmpty()) {
+                            "没有发现开放的 445 端口。请确认 NAS 已开启 SMB，且与电视在同一网段。"
+                        } else {
+                            "发现 ${hosts.size} 台设备，选中后填入账号即可。"
+                        }
+                    }
+                },
+                enabled = !busy
+            ) { Text("扫描局域网 SMB", fontSize = 14.sp) }
+
+            Button(
+                onClick = {
+                    busy = true
+                    discoveredDlna = emptyList()
+                    message = "正在搜索局域网内的 DLNA 设备…"
+                    scope.launch {
+                        val found = services.dlnaDiscovery.discover()
+                        discoveredDlna = found
+                        busy = false
+                        message = if (found.isEmpty()) {
+                            "没有发现 DLNA 设备（请确认 NAS 已开启 DLNA / 媒体服务器）"
+                        } else {
+                            null
+                        }
+                    }
+                },
+                enabled = !busy
+            ) { Text("扫描 DLNA 设备", fontSize = 14.sp) }
+
+            Button(onClick = onExit) { Text("返回", fontSize = 14.sp) }
+        }
+
+        message?.let {
+            Text(text = it, fontSize = 14.sp, color = Color(0xFFFFD54F))
+        }
+
+        if (locations.isEmpty() && discoveredSmb.isEmpty() && discoveredDlna.isEmpty()) {
+            Text(
+                text = "还没有添加任何网络位置。不确定 NAS 的 IP？直接点「扫描局域网 SMB」。",
+                fontSize = 14.sp,
+                color = Color(0xFFB0BEC5),
+                modifier = Modifier.padding(top = 8.dp)
+            )
+        }
+
+        LazyColumn(
+            modifier = Modifier.weight(1f),
+            contentPadding = PaddingValues(vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            items(discoveredSmb, key = { "smb-found-" + it }) { host ->
+                Card(onClick = { form = FormMode.Create(host) }) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(text = host, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                            Text(text = "发现 SMB 服务", fontSize = 12.sp, color = Color(0xFF90A4AE))
+                        }
+                        Text(
+                            text = "选择以配置 →",
+                            fontSize = 13.sp,
+                            color = Color(0xFFFFD54F)
+                        )
+                    }
+                }
+            }
+
+            items(discoveredDlna, key = { "dlna-" + it.descriptionUrl }) { device ->
+                Card(onClick = { openDlna(device) }) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = device.friendlyName,
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Text(text = "DLNA · ${device.host}", fontSize = 12.sp, color = Color(0xFF90A4AE))
+                        }
+                        Text(
+                            text = "选择以保存并进入 →",
+                            fontSize = 13.sp,
+                            color = Color(0xFFFFD54F)
+                        )
+                    }
+                }
+            }
+
+            items(locations, key = { it.id }) { location ->
+                Card(onClick = { browsing = location }) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = location.displayName,
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Text(
+                                text = buildString {
+                                    append(location.type.displayName)
+                                    append(" · ").append(location.host)
+                                    location.share?.takeIf { it.isNotBlank() }?.let { append("/").append(it) }
+                                    append(" · ")
+                                    append(if (location.isAnonymous) "匿名" else location.username)
+                                },
+                                fontSize = 12.sp,
+                                color = Color(0xFF90A4AE),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Button(onClick = { browsing = location }) { Text("进入", fontSize = 14.sp) }
+                            Button(onClick = { form = FormMode.Edit(location) }) { Text("编辑", fontSize = 14.sp) }
+                            Button(onClick = {
+                                services.smbPool.invalidate(location.host)
+                                persistAll(locations.filterNot { it.id == location.id })
+                            }) { Text("删除", fontSize = 14.sp) }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
