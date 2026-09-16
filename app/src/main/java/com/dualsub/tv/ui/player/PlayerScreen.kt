@@ -8,6 +8,15 @@ import android.view.SurfaceView
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -16,6 +25,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
@@ -29,12 +39,16 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -63,10 +77,11 @@ fun PlayerScreen(
     onBack: () -> Unit
 ) {
     val context = LocalContext.current
+    val density = LocalDensity.current
     val primary by viewModel.primary.collectAsState()
     val secondary by viewModel.secondary.collectAsState()
-    val primaryText by viewModel.primaryText.collectAsState()
-    val secondaryText by viewModel.secondaryText.collectAsState()
+    val primaryCue by viewModel.primaryCue.collectAsState()
+    val secondaryCue by viewModel.secondaryCue.collectAsState()
     val isPlaying by viewModel.isPlaying.collectAsState()
     val positionMs by viewModel.positionMs.collectAsState()
     val durationMs by viewModel.durationMs.collectAsState()
@@ -81,6 +96,9 @@ fun PlayerScreen(
     var pickForPrimary by remember { mutableStateOf(true) }
     var showBuffering by remember { mutableStateOf(false) }
     var showDiagnostics by remember { mutableStateOf(false) }
+    var seekHint by remember { mutableStateOf<String?>(null) }
+    // 主字幕实际渲染高度（px），用于动态计算次字幕底部距离，防止多行时重叠
+    var primaryHeightPx by remember { mutableStateOf(0) }
 
     val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
@@ -115,6 +133,13 @@ fun PlayerScreen(
         }
     }
 
+    LaunchedEffect(seekHint) {
+        if (seekHint != null) {
+            delay(SEEK_HINT_DURATION_MS)
+            seekHint = null
+        }
+    }
+
     BackHandler {
         if (panelOpen) panelOpen = false else onBack()
     }
@@ -135,15 +160,15 @@ fun PlayerScreen(
 
                     Key.MediaFastForward -> {
                         viewModel.seekBy(SEEK_STEP_MS)
+                        seekHint = "⏩ +10s"
                         true
                     }
 
                     Key.MediaRewind -> {
                         viewModel.seekBy(-SEEK_STEP_MS)
+                        seekHint = "⏪ -10s"
                         true
-                    }
-
-                    // 屏上诊断：菜单键 / 信息键开关，用来在真机上直接看播放器卡在哪一步
+                    }                    // 屏上诊断：菜单键 / 信息键开关，用来在真机上直接看播放器卡在哪一步
                     Key.Menu, Key.Info -> {
                         showDiagnostics = !showDiagnostics
                         true
@@ -166,8 +191,29 @@ fun PlayerScreen(
             modifier = Modifier.fillMaxSize()
         )
 
-        SubtitleOverlay(text = secondaryText, style = secondary.style)
-        SubtitleOverlay(text = primaryText, style = primary.style)
+        // \pos 绝对定位时主字幕自带坐标，不参与次字幕避位计算
+        val primaryUsesAbsPos = primaryCue?.assOverride?.posX != null
+        val primaryBaseBottom = primary.style.bottomPaddingDp
+        val primaryHeightDp = with(density) { primaryHeightPx.toDp().value.toInt() }
+        val secondaryDynamicBottom = if (primaryUsesAbsPos) {
+            secondary.style.bottomPaddingDp
+        } else {
+            maxOf(
+                secondary.style.bottomPaddingDp,
+                primaryBaseBottom + primaryHeightDp + SUBTITLE_GAP_DP
+            )
+        }
+        SubtitleOverlay(
+            cue = secondaryCue,
+            style = secondary.style.copy(bottomPaddingDp = secondaryDynamicBottom),
+            positionMs = positionMs
+        )
+        SubtitleOverlay(
+            cue = primaryCue,
+            style = primary.style,
+            positionMs = positionMs,
+            onHeightPx = { primaryHeightPx = it }
+        )
 
         if (showControls && !panelOpen) {
             PlayerControls(
@@ -178,8 +224,14 @@ fun PlayerScreen(
                 primaryLabel = primary.label,
                 secondaryLabel = secondary.label,
                 onTogglePlayPause = viewModel::togglePlayPause,
-                onSeekBackward = { viewModel.seekBy(-SEEK_STEP_MS) },
-                onSeekForward = { viewModel.seekBy(SEEK_STEP_MS) },
+                onSeekBackward = {
+                    viewModel.seekBy(-SEEK_STEP_MS)
+                    seekHint = "⏪ -10s"
+                },
+                onSeekForward = {
+                    viewModel.seekBy(SEEK_STEP_MS)
+                    seekHint = "⏩ +10s"
+                },
                 onConfigurePrimary = {
                     pickForPrimary = true
                     panelOpen = true
@@ -243,7 +295,29 @@ fun PlayerScreen(
                     modifier = Modifier.fillMaxSize(),
                     contentAlignment = Alignment.Center
                 ) {
-                    Text(text = "正在缓冲…", fontSize = 16.sp, color = Color.White)
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        SpinningProgressIndicator()
+                        Text(text = "正在缓冲…", fontSize = 14.sp, color = Color(0xFFB0BEC5))
+                    }
+                }
+            }
+
+            // 快进/快退中央 overlay，600ms 淡出
+            AnimatedVisibility(
+                visible = seekHint != null,
+                enter = fadeIn(),
+                exit = fadeOut(),
+                modifier = Modifier.align(Alignment.Center)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .background(Color(0xCC000000), RoundedCornerShape(12.dp))
+                        .padding(horizontal = 24.dp, vertical = 14.dp)
+                ) {
+                    Text(text = seekHint ?: "", fontSize = 22.sp, color = Color.White)
                 }
             }
 
@@ -331,3 +405,26 @@ private fun displayNameOf(context: Context, uri: Uri): String {
 private const val AUTO_HIDE_DELAY_MS = 6000L
 private const val SEEK_STEP_MS = 10_000L
 private const val BUFFERING_HINT_DELAY_MS = 700L
+private const val SEEK_HINT_DURATION_MS = 600L
+private const val SUBTITLE_GAP_DP = 8
+
+/** 无依赖的旋转圆弧缓冲指示器（tv-material 1.0.0 没有 CircularProgressIndicator）。 */
+@Composable
+private fun SpinningProgressIndicator() {
+    val transition = rememberInfiniteTransition(label = "buf")
+    val angle by transition.animateFloat(
+        initialValue = 0f,
+        targetValue = 360f,
+        animationSpec = infiniteRepeatable(tween(900, easing = LinearEasing)),
+        label = "buf_angle"
+    )
+    Canvas(modifier = Modifier.size(48.dp).graphicsLayer { rotationZ = angle }) {
+        drawArc(
+            color = Color.White,
+            startAngle = 0f,
+            sweepAngle = 270f,
+            useCenter = false,
+            style = Stroke(width = 4.dp.toPx(), cap = StrokeCap.Round)
+        )
+    }
+}

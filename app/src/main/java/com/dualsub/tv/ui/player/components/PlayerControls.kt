@@ -1,6 +1,7 @@
 package com.dualsub.tv.ui.player.components
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -12,11 +13,19 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -31,6 +40,8 @@ import com.dualsub.tv.ui.format.formatTime
  *
  * 播放控制刻意排在字幕入口**上一行** —— 焦点默认落在第一个可聚焦元素上，
  * 这样按遥控器确认键时最常用的操作就是「播放/暂停」，而不是先掉进字幕面板。
+ *
+ * 进度条本身也可聚焦：焦点移到进度条后，←/→ 方向键触发 onSeekBackward/Forward。
  */
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
@@ -72,7 +83,12 @@ fun PlayerControls(
                 overflow = TextOverflow.Ellipsis
             )
 
-            ProgressBar(positionMs = positionMs, durationMs = durationMs)
+            SeekableProgressBar(
+                positionMs = positionMs,
+                durationMs = durationMs,
+                onSeekBackward = onSeekBackward,
+                onSeekForward = onSeekForward
+            )
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -105,12 +121,19 @@ fun PlayerControls(
 }
 
 @Composable
-private fun ProgressBar(positionMs: Long, durationMs: Long) {
+private fun SeekableProgressBar(
+    positionMs: Long,
+    durationMs: Long,
+    onSeekBackward: () -> Unit,
+    onSeekForward: () -> Unit
+) {
     val fraction = if (durationMs > 0L) {
         (positionMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f)
     } else {
         0f
     }
+
+    val focusRequester = remember { FocusRequester() }
 
     Box(
         modifier = Modifier
@@ -118,6 +141,16 @@ private fun ProgressBar(positionMs: Long, durationMs: Long) {
             .height(6.dp)
             .clip(RoundedCornerShape(3.dp))
             .background(Color.White.copy(alpha = 0.28f))
+            .focusRequester(focusRequester)
+            .focusable()
+            .onKeyEvent { event ->
+                if (event.type != KeyEventType.KeyDown) return@onKeyEvent false
+                when (event.key) {
+                    Key.DirectionLeft -> { onSeekBackward(); true }
+                    Key.DirectionRight -> { onSeekForward(); true }
+                    else -> false
+                }
+            }
     ) {
         Box(
             modifier = Modifier

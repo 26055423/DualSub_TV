@@ -60,11 +60,11 @@ class PlayerViewModel(
     private val _secondary = MutableStateFlow(SubtitleTrack(style = SubtitleStyle.SECONDARY))
     val secondary: StateFlow<SubtitleTrack> = _secondary.asStateFlow()
 
-    private val _primaryText = MutableStateFlow<String?>(null)
-    val primaryText: StateFlow<String?> = _primaryText.asStateFlow()
+    private val _primaryCue = MutableStateFlow<SubtitleCue?>(null)
+    val primaryCue: StateFlow<SubtitleCue?> = _primaryCue.asStateFlow()
 
-    private val _secondaryText = MutableStateFlow<String?>(null)
-    val secondaryText: StateFlow<String?> = _secondaryText.asStateFlow()
+    private val _secondaryCue = MutableStateFlow<SubtitleCue?>(null)
+    val secondaryCue: StateFlow<SubtitleCue?> = _secondaryCue.asStateFlow()
 
     private val _positionMs = MutableStateFlow(0L)
     val positionMs: StateFlow<Long> = _positionMs.asStateFlow()
@@ -388,8 +388,8 @@ class PlayerViewModel(
                 if (released) break
                 val position = controller.player.currentPosition
                 _positionMs.value = position
-                _primaryText.value = _primary.value.cueAt(position)?.text
-                _secondaryText.value = _secondary.value.cueAt(position)?.text
+                _primaryCue.value   = _primary.value.cueAt(position)
+                _secondaryCue.value = _secondary.value.cueAt(position)
 
                 sinceLastSave += TICK_INTERVAL_MS
                 if (sinceLastSave >= SAVE_INTERVAL_MS) {
