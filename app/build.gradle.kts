@@ -78,6 +78,9 @@ dependencies {
     // 播放引擎
     implementation(libs.androidx.media3.exoplayer)
     implementation(libs.androidx.media3.common)
+    // FFmpeg 软解扩展（本地编译）：解决 DTS / TrueHD / EAC3 / AC3 等音频格式
+    // 编译方式见 ~/Project/media3-1.4.1/libraries/decoder_ffmpeg/src/main/jni/build_ffmpeg_tv.sh
+    implementation(files("libs/lib-decoder-ffmpeg-release.aar"))
 
     // 局域网 SMB（SMB2/SMB3，纯 Java）：浏览与播放
     implementation(libs.smbj) {

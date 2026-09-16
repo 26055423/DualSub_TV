@@ -303,13 +303,13 @@ class PlayerViewModel(
             override fun onPlayerError(error: PlaybackException) {
                 _isBuffering.value = false
 
-                // 不少 MKV 带 DTS / TrueHD 音轨，而设备往往根本没有对应解码器，
-                // ExoPlayer 默认会因此判定整片播放失败。这里退一步：关掉音频轨重试一次，
+                // 不少 MKV 带 DTS / TrueHD 音轨，ExoPlayer 会先尝试 FFmpeg 软解；
+                // 若 FFmpeg 扩展也解不了才会走到这里。退一步：关掉音频轨重试，
                 // 至少画面能放出来，并如实告诉用户没声音的原因。
                 if (!audioFallbackTried && isDecodingError(error.errorCode)) {
                     audioFallbackTried = true
                     _playerError.value = null
-                    _notice.value = "音频编码设备不支持（MKV 常见 DTS / TrueHD），已改为静音播放"
+                    _notice.value = "音频编码不支持（已尝试软解），改为静音播放"
                     Log.i(TAG, "解码失败，禁用音频轨后重试：${error.errorCodeName}")
                     runCatching { controller.disableAudioAndRetry() }
                     return
