@@ -23,6 +23,8 @@ jcifs = "2.1.10"
 bcprov = "1.78.1"
 junit = "4.13.2"
 androidxJunit = "1.2.1"
+zxing = "3.5.3"
+okhttp = "4.12.0"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -46,6 +48,8 @@ jcifs-ng = { group = "eu.agno3.jcifs", name = "jcifs-ng", version.ref = "jcifs" 
 bcprov = { group = "org.bouncycastle", name = "bcprov-jdk15to18", version.ref = "bcprov" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
 androidx-junit = { group = "androidx.test.ext", name = "junit", version.ref = "androidxJunit" }
+zxing-core = { group = "com.google.zxing", name = "core", version.ref = "zxing" }
+okhttp = { group = "com.squareup.okhttp3", name = "okhttp", version.ref = "okhttp" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

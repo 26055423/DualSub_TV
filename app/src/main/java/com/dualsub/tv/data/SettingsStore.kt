@@ -155,7 +155,9 @@ class SettingsStore(private val context: Context) {
         location.password.orEmpty(),
         location.domain.orEmpty(),
         location.descriptionUrl.orEmpty(),
-        location.controlUrl.orEmpty()
+        location.controlUrl.orEmpty(),
+        location.token.orEmpty(),
+        location.refreshToken.orEmpty()
     ).joinToString(SEPARATOR)
 
     private fun decodeLocations(raw: String?): List<RemoteLocation> {
@@ -177,7 +179,9 @@ class SettingsStore(private val context: Context) {
             password = parts.getOrNull(6)?.ifBlank { null },
             domain = parts.getOrNull(7)?.ifBlank { null },
             descriptionUrl = parts.getOrNull(8)?.ifBlank { null },
-            controlUrl = parts.getOrNull(9)?.ifBlank { null }
+            controlUrl = parts.getOrNull(9)?.ifBlank { null },
+            token = parts.getOrNull(10)?.ifBlank { null },
+            refreshToken = parts.getOrNull(11)?.ifBlank { null }
         )
     }
 

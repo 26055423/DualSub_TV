@@ -3,14 +3,18 @@ package com.dualsub.tv.network
 /** 局域网资源的类型。 */
 enum class RemoteType(val displayName: String) {
     SMB("SMB / 共享文件夹"),
-    DLNA("DLNA / 媒体服务器")
+    DLNA("DLNA / 媒体服务器"),
+    QUARK("夸克网盘"),
+    BAIDU("百度网盘")
 }
 
 /**
- * 一个网络位置（SMB 服务器或 DLNA 媒体服务器）。
+ * 一个网络位置（SMB 服务器、DLNA 媒体服务器或云网盘账号）。
  *
  * 密码按既定选择以**明文**保存在应用私有目录，非 root 设备上其他应用读不到；
  * 与 Kodi 等播放器的默认做法一致。
+ * 云网盘的认证凭据（夸克 Cookie / 百度 access_token）存于 [token] 字段，
+ * 百度的 refresh_token 存于 [refreshToken]。
  */
 data class RemoteLocation(
     /** 稳定标识，用于持久化与去重。 */
@@ -26,7 +30,11 @@ data class RemoteLocation(
     /** DLNA 的设备描述 URL（SSDP 响应里的 LOCATION）。 */
     val descriptionUrl: String? = null,
     /** DLNA 的 ContentDirectory controlURL（来自设备描述，常为相对路径）。 */
-    val controlUrl: String? = null
+    val controlUrl: String? = null,
+    /** 云网盘认证凭据：夸克存 Cookie 串，百度存 access_token。 */
+    val token: String? = null,
+    /** 百度网盘的 refresh_token，其余来源为 null。 */
+    val refreshToken: String? = null
 ) {
     /** 匿名登录（不填账号）时大多数 NAS 也允许访客访问。 */
     val isAnonymous: Boolean get() = username.isNullOrBlank()

@@ -13,6 +13,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -34,6 +35,8 @@ import com.dualsub.tv.media.VideoItem
 import com.dualsub.tv.network.RemoteLocation
 import com.dualsub.tv.network.RemoteType
 import com.dualsub.tv.network.dlna.DlnaDevice
+import com.dualsub.tv.network.webdrive.BaiduAuthState
+import com.dualsub.tv.network.webdrive.QuarkAuthState
 import kotlinx.coroutines.launch
 
 /** 表单当前要处理的对象。 */
@@ -45,17 +48,16 @@ private sealed interface FormMode {
 
     /** 编辑已有条目 —— 改 IP、改密码、换共享都走这里。 */
     data class Edit(val location: RemoteLocation) : FormMode
+
+    /** 夸克网盘扫码登录。 */
+    data object QuarkLogin : FormMode
+
+    /** 百度网盘 Device Code 登录。 */
+    data object BaiduLogin : FormMode
 }
 
 /**
- * 「网络位置」：管理 SMB / DLNA 服务器，并进入目录浏览。
- *
- * 浏览到的位置会即时登记到 [AppServices.smbRegistry] —— 播放器只拿到 `smb://host/...`
- * 这样的地址，账号密码必须靠这个注册表按主机反查。
- *
- * 注意列表项一律**整卡可点击**，不再在卡内放按钮：TV 上卡片本身就是可聚焦的，
- * 焦点落在卡片上而卡片的 onClick 为空时，按确认键会「没反应」——这正是最容易被误判为
- * 「按钮坏了」的情况。
+ * 「网络位置」：管理 SMB / DLNA / 网盘来源，并进入目录浏览。
  */
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
@@ -73,10 +75,24 @@ fun NetworkScreen(
     var discoveredSmb by remember { mutableStateOf<List<String>>(emptyList()) }
     var message by remember { mutableStateOf<String?>(null) }
 
+    val quarkState by services.quarkAuth.state.collectAsState()
+    val baiduState by services.baiduAuth.state.collectAsState()
+
     LaunchedEffect(Unit) {
         services.settings.remoteLocations().collect { list ->
             locations = list
             services.smbRegistry.registerAll(list)
+            // 从持久化的 RemoteLocation 恢复网盘登录态
+            list.firstOrNull { it.type == RemoteType.QUARK && !it.token.isNullOrBlank() }?.let {
+                if (!services.quarkAuth.isLoggedIn) services.quarkAuth.restoreFromCookie(it.token!!)
+            }
+            list.firstOrNull {
+                it.type == RemoteType.BAIDU && !it.token.isNullOrBlank()
+            }?.let {
+                if (!services.baiduAuth.isLoggedIn) {
+                    services.baiduAuth.restoreFromToken(it.token!!, it.refreshToken.orEmpty())
+                }
+            }
         }
     }
 
@@ -115,8 +131,6 @@ fun NetworkScreen(
         browsing = location
     }
 
-    // 表单打开时不渲染背后的列表 —— 否则两者都在焦点遍历树里，
-    // 方向键会把焦点移到被盖住的列表项上（真机上表现为「焦点跑到下一层」）。
     val mode = form
     when (mode) {
         FormMode.Closed -> Unit
@@ -145,12 +159,50 @@ fun NetworkScreen(
                 initial = mode.location,
                 onCancel = { form = FormMode.Closed },
                 onSave = { location ->
-                    // 主机或共享改了，id 会变，所以按旧 id 定位替换
                     persistAll(locations.map { if (it.id == mode.location.id) location else it })
-                    // 凭据/主机可能已变，丢掉旧连接，避免继续用错密码
                     services.smbPool.invalidate(mode.location.host)
                     form = FormMode.Closed
                 }
+            )
+            return
+        }
+
+        is FormMode.QuarkLogin -> {
+            QuarkLoginScreen(
+                quarkAuth = services.quarkAuth,
+                onSuccess = { cookie ->
+                    val existing = locations.firstOrNull { it.type == RemoteType.QUARK }
+                    val location = (existing ?: RemoteLocation(
+                        id = "quark:account",
+                        type = RemoteType.QUARK,
+                        displayName = "夸克网盘",
+                        host = "drive.quark.cn"
+                    )).copy(token = cookie)
+                    persistAll(locations.filterNot { it.id == location.id } + location)
+                    form = FormMode.Closed
+                    browsing = location
+                },
+                onCancel = { form = FormMode.Closed }
+            )
+            return
+        }
+
+        is FormMode.BaiduLogin -> {
+            BaiduLoginScreen(
+                baiduAuth = services.baiduAuth,
+                onSuccess = { access, refresh ->
+                    val existing = locations.firstOrNull { it.type == RemoteType.BAIDU }
+                    val location = (existing ?: RemoteLocation(
+                        id = "baidu:account",
+                        type = RemoteType.BAIDU,
+                        displayName = "百度网盘",
+                        host = "pan.baidu.com"
+                    )).copy(token = access, refreshToken = refresh)
+                    persistAll(locations.filterNot { it.id == location.id } + location)
+                    form = FormMode.Closed
+                    browsing = location
+                },
+                onCancel = { form = FormMode.Closed }
             )
             return
         }
@@ -165,16 +217,15 @@ fun NetworkScreen(
     ) {
         Text(text = "网络位置", fontSize = 28.sp, fontWeight = FontWeight.Bold)
         Text(
-            text = "支持 SMB 共享（Windows / NAS）与 DLNA 媒体服务器。密码以明文保存在应用私有目录。",
+            text = "支持 SMB 共享（Windows / NAS）、DLNA 媒体服务器、夸克网盘、百度网盘。",
             fontSize = 13.sp,
             color = Color(0xFF90A4AE)
         )
 
+        // LAN 按钮行
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             Button(
                 onClick = {
-                    // 按本机网段预填前三位（如 `192.168.1.`），用户补最后一段即可；
-                    // 取不到网络信息时留空，让用户自己填完整地址。
                     val prefix = services.smbDiscovery.localSubnetPrefix()
                     form = FormMode.Create(prefix.ifEmpty { null })
                 }
@@ -220,13 +271,74 @@ fun NetworkScreen(
             Button(onClick = onExit) { Text("返回", fontSize = 14.sp) }
         }
 
+        // 网盘按钮行
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            val quarkLoggedIn = quarkState is QuarkAuthState.LoggedIn
+            Button(
+                onClick = {
+                    if (quarkLoggedIn) {
+                        browsing = locations.firstOrNull { it.type == RemoteType.QUARK }
+                            ?: RemoteLocation(
+                                id = "quark:account", type = RemoteType.QUARK,
+                                displayName = "夸克网盘", host = "drive.quark.cn"
+                            )
+                    } else {
+                        form = FormMode.QuarkLogin
+                    }
+                }
+            ) {
+                Text(
+                    text = if (quarkLoggedIn) "夸克网盘（已登录）" else "登录夸克网盘",
+                    fontSize = 14.sp
+                )
+            }
+
+            val baiduLoggedIn = baiduState is BaiduAuthState.LoggedIn
+            Button(
+                onClick = {
+                    if (baiduLoggedIn) {
+                        browsing = locations.firstOrNull { it.type == RemoteType.BAIDU }
+                            ?: RemoteLocation(
+                                id = "baidu:account", type = RemoteType.BAIDU,
+                                displayName = "百度网盘", host = "pan.baidu.com"
+                            )
+                    } else {
+                        form = FormMode.BaiduLogin
+                    }
+                }
+            ) {
+                Text(
+                    text = if (baiduLoggedIn) "百度网盘（已登录）" else "登录百度网盘",
+                    fontSize = 14.sp
+                )
+            }
+
+            // 退出登录按钮（仅已登录时显示）
+            if (quarkLoggedIn) {
+                Button(
+                    onClick = {
+                        services.quarkAuth.logout()
+                        persistAll(locations.filterNot { it.type == RemoteType.QUARK })
+                    }
+                ) { Text("退出夸克", fontSize = 14.sp) }
+            }
+            if (baiduLoggedIn) {
+                Button(
+                    onClick = {
+                        services.baiduAuth.logout()
+                        persistAll(locations.filterNot { it.type == RemoteType.BAIDU })
+                    }
+                ) { Text("退出百度", fontSize = 14.sp) }
+            }
+        }
+
         message?.let {
             Text(text = it, fontSize = 14.sp, color = Color(0xFFFFD54F))
         }
 
         if (locations.isEmpty() && discoveredSmb.isEmpty() && discoveredDlna.isEmpty()) {
             Text(
-                text = "还没有添加任何网络位置。不确定 NAS 的 IP？直接点「扫描局域网 SMB」。",
+                text = "还没有添加任何网络位置。",
                 fontSize = 14.sp,
                 color = Color(0xFFB0BEC5),
                 modifier = Modifier.padding(top = 8.dp)
@@ -249,11 +361,7 @@ fun NetworkScreen(
                             Text(text = host, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
                             Text(text = "发现 SMB 服务", fontSize = 12.sp, color = Color(0xFF90A4AE))
                         }
-                        Text(
-                            text = "选择以配置 →",
-                            fontSize = 13.sp,
-                            color = Color(0xFFFFD54F)
-                        )
+                        Text(text = "选择以配置 →", fontSize = 13.sp, color = Color(0xFFFFD54F))
                     }
                 }
             }
@@ -273,16 +381,15 @@ fun NetworkScreen(
                             )
                             Text(text = "DLNA · ${device.host}", fontSize = 12.sp, color = Color(0xFF90A4AE))
                         }
-                        Text(
-                            text = "选择以保存并进入 →",
-                            fontSize = 13.sp,
-                            color = Color(0xFFFFD54F)
-                        )
+                        Text(text = "选择以保存并进入 →", fontSize = 13.sp, color = Color(0xFFFFD54F))
                     }
                 }
             }
 
             items(locations, key = { it.id }) { location ->
+                // 网盘账号在按钮行已有入口，列表里跳过避免重复
+                if (location.type == RemoteType.QUARK || location.type == RemoteType.BAIDU) return@items
+
                 Card(onClick = { browsing = location }) {
                     Row(
                         modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
@@ -325,3 +432,4 @@ fun NetworkScreen(
         }
     }
 }
+

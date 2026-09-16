@@ -13,6 +13,8 @@ import com.dualsub.tv.network.smb.SmbLocationRegistry
 import com.dualsub.tv.network.smb.SmbMediaDataSource
 import com.dualsub.tv.network.smb.SmbPaths
 import com.dualsub.tv.network.smb.SmbSessionPool
+import com.dualsub.tv.network.webdrive.BaiduAuthManager
+import com.dualsub.tv.network.webdrive.QuarkAuthManager
 
 /**
  * 应用级的依赖容器。
@@ -32,9 +34,16 @@ class AppServices(context: Context) {
     /** 播放器只拿到 `smb://host/...`，账号密码靠这里按主机反查。 */
     val smbRegistry = SmbLocationRegistry()
 
-    val dataSourceFactory: DataSource.Factory = DualSubDataSourceFactory(appContext, smbPool, smbRegistry)
+    /** 夸克网盘登录状态管理（Cookie 持久化由 NetworkScreen 写入 SettingsStore）。 */
+    val quarkAuth = QuarkAuthManager()
 
-    val browserFactory = RemoteBrowserFactory(smbPool)
+    /** 百度网盘登录状态管理（Token 持久化由 NetworkScreen 写入 SettingsStore）。 */
+    val baiduAuth = BaiduAuthManager()
+
+    val dataSourceFactory: DataSource.Factory =
+        DualSubDataSourceFactory(appContext, smbPool, smbRegistry, quarkAuth, baiduAuth)
+
+    val browserFactory = RemoteBrowserFactory(smbPool, quarkAuth, baiduAuth)
 
     val dlnaDiscovery = DlnaDiscovery(appContext)
 
