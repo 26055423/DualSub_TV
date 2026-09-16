@@ -9,7 +9,7 @@ import java.util.concurrent.TimeUnit
  * 百度网盘 Open API 封装。
  *
  * 使用官方开放平台接口，需要 AppKey。
- * 认证走 Device Code Flow（专为无浏览器设备设计）。
+ * 认证走二维码登录流程（TV 显示二维码，用户用手机扫码授权）。
  * 文件下载链接通过 filemetas 接口获取（dlink=1），播放需携带 Authorization 头。
  *
  * 官方文档：https://pan.baidu.com/union/doc
@@ -21,66 +21,84 @@ class BaiduApiClient {
         .readTimeout(20, TimeUnit.SECONDS)
         .build()
 
-    // ── Device Code Flow ────────────────────────────────────
+    // ── 二维码登录 ───────────────────────────────────────────
 
     /**
-     * 第一步：获取 Device Code。
-     * 返回 [BaiduDeviceCodeResult]，包含显示给用户的 user_code 和 device_code。
+     * 第一步：获取二维码信息。
+     * 返回 [BaiduQrSession]，包含显示给用户的二维码图片 URL 和轮询用的 qrcode_key。
      */
-    fun getDeviceCode(): BaiduDeviceCodeResult {
+    fun getQrCode(): BaiduQrSession {
         val url = buildString {
-            append("https://openapi.baidu.com/oauth/2.0/device/code")
-            append("?response_type=device_code")
-            append("&client_id=$APP_KEY")
+            append("https://openapi.baidu.com/oauth/2.0/qrcode")
+            append("?client_id=$APP_KEY")
+            append("&response_type=code")
             append("&scope=basic,netdisk")
+            append("&redirect_uri=oob")
+            append("&display=tv")
         }
         val request = Request.Builder().url(url).get().build()
         return client.newCall(request).execute().use { response ->
             val text = response.body?.string() ?: ""
             val root = JSONObject(text)
             if (root.has("error")) {
-                throw BaiduApiException("获取设备码失败：${root.optString("error_description", text)}")
+                throw BaiduApiException("获取二维码失败：${root.optString("error_description", text)}")
             }
-            BaiduDeviceCodeResult(
-                deviceCode = root.getString("device_code"),
-                userCode = root.getString("user_code"),
-                verificationUrl = root.optString("verification_url", "https://openapi.baidu.com/device"),
-                expiresIn = root.optInt("expires_in", 1800),
-                interval = root.optInt("interval", 5)
+            BaiduQrSession(
+                qrcodeKey = root.getString("qrcode_key"),
+                qrcodeUrl = root.getString("qrcode_url"),
+                expiresIn = root.optInt("expires_in", 300)
             )
         }
     }
 
     /**
-     * 第二步：轮询 Token（用 device_code 换 access_token）。
-     * 返回 [BaiduTokenResult] 或 [BaiduPollStatus] 中间状态。
+     * 第二步：轮询二维码扫码状态。
+     * 返回 [BaiduQrStatus]，授权后包含 authorization_code。
      */
-    fun pollToken(deviceCode: String): BaiduPollResult {
+    fun pollQrStatus(qrcodeKey: String): BaiduQrStatus {
         val url = buildString {
-            append("https://openapi.baidu.com/oauth/2.0/token")
-            append("?grant_type=device_token")
-            append("&code=$deviceCode")
-            append("&client_id=$APP_KEY")
-            append("&client_secret=$APP_SECRET")
+            append("https://openapi.baidu.com/rest/2.0/passport/users/qrlogin/query")
+            append("?qrcode_key=$qrcodeKey")
         }
         val request = Request.Builder().url(url).get().build()
         return client.newCall(request).execute().use { response ->
             val text = response.body?.string() ?: ""
             val root = JSONObject(text)
-            when {
-                root.has("access_token") -> BaiduPollResult.Success(
-                    BaiduTokenResult(
-                        accessToken = root.getString("access_token"),
-                        refreshToken = root.optString("refresh_token", ""),
-                        expiresIn = root.optLong("expires_in", 2592000L)
-                    )
-                )
-                root.optString("error") == "authorization_pending" -> BaiduPollResult.Pending
-                root.optString("error") == "slow_down" -> BaiduPollResult.SlowDown
-                root.optString("error") == "access_denied" -> BaiduPollResult.Denied
-                root.optString("error") == "expired_token" -> BaiduPollResult.Expired
-                else -> BaiduPollResult.Error(root.optString("error_description", text))
+            when (root.optString("status")) {
+                "waiting" -> BaiduQrStatus.Waiting
+                "scanned" -> BaiduQrStatus.Scanned
+                "login_success" -> BaiduQrStatus.Authorized(root.getString("code"))
+                "expired" -> BaiduQrStatus.Expired
+                "cancel" -> BaiduQrStatus.Denied
+                else -> BaiduQrStatus.Waiting
             }
+        }
+    }
+
+    /**
+     * 第三步：用 authorization_code 换 access_token。
+     */
+    fun exchangeToken(code: String): BaiduTokenResult {
+        val url = buildString {
+            append("https://openapi.baidu.com/oauth/2.0/token")
+            append("?grant_type=authorization_code")
+            append("&code=$code")
+            append("&client_id=$APP_KEY")
+            append("&client_secret=$APP_SECRET")
+            append("&redirect_uri=oob")
+        }
+        val request = Request.Builder().url(url).get().build()
+        return client.newCall(request).execute().use { response ->
+            val text = response.body?.string() ?: ""
+            val root = JSONObject(text)
+            if (!root.has("access_token")) {
+                throw BaiduApiException("换取 Token 失败：${root.optString("error_description", text)}")
+            }
+            BaiduTokenResult(
+                accessToken = root.getString("access_token"),
+                refreshToken = root.optString("refresh_token", ""),
+                expiresIn = root.optLong("expires_in", 2592000L)
+            )
         }
     }
 
@@ -195,13 +213,19 @@ class BaiduApiClient {
     }
 }
 
-data class BaiduDeviceCodeResult(
-    val deviceCode: String,
-    val userCode: String,
-    val verificationUrl: String,
-    val expiresIn: Int,
-    val interval: Int
+data class BaiduQrSession(
+    val qrcodeKey: String,
+    val qrcodeUrl: String,
+    val expiresIn: Int
 )
+
+sealed class BaiduQrStatus {
+    data object Waiting : BaiduQrStatus()
+    data object Scanned : BaiduQrStatus()
+    data class Authorized(val code: String) : BaiduQrStatus()
+    data object Expired : BaiduQrStatus()
+    data object Denied : BaiduQrStatus()
+}
 
 data class BaiduTokenResult(
     val accessToken: String,
@@ -217,15 +241,6 @@ data class BaiduEntry(
     val size: Long,
     val category: Int
 )
-
-sealed class BaiduPollResult {
-    data class Success(val token: BaiduTokenResult) : BaiduPollResult()
-    data object Pending : BaiduPollResult()
-    data object SlowDown : BaiduPollResult()
-    data object Denied : BaiduPollResult()
-    data object Expired : BaiduPollResult()
-    data class Error(val message: String) : BaiduPollResult()
-}
 
 class BaiduApiException(message: String) : Exception(message)
 class BaiduTokenExpiredException : Exception("Access Token 已过期")

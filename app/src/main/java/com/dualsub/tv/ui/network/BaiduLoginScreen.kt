@@ -1,16 +1,19 @@
 package com.dualsub.tv.ui.network
 
+import android.graphics.Bitmap
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -19,6 +22,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -28,12 +32,13 @@ import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.Text
 import com.dualsub.tv.network.webdrive.BaiduAuthManager
 import com.dualsub.tv.network.webdrive.BaiduAuthState
-import com.dualsub.tv.network.webdrive.BaiduDeviceCodeResult
+import com.google.zxing.BarcodeFormat
+import com.google.zxing.qrcode.QRCodeWriter
 
 /**
- * 百度网盘 Device Code 登录页。
+ * 百度网盘扫码登录页。
  *
- * TV 屏幕展示 user_code 和验证 URL，用户在手机/PC 上输入码或扫描二维码授权。
+ * TV 屏幕展示二维码，用户用手机百度 App 或浏览器扫码授权。
  * 授权成功后调用 [onSuccess]，携带 access_token 和 refresh_token。
  */
 @OptIn(ExperimentalTvMaterial3Api::class)
@@ -46,9 +51,8 @@ fun BaiduLoginScreen(
     val state by baiduAuth.state.collectAsState()
     var errorMsg by remember { mutableStateOf<String?>(null) }
 
-    androidx.compose.runtime.LaunchedEffect(Unit) {
-        baiduAuth.startDeviceLogin(
-            onCodeReady = { /* state 更新会触发 UI 重组 */ },
+    LaunchedEffect(Unit) {
+        baiduAuth.startQrLogin(
             onSuccess = { access, refresh -> onSuccess(access, refresh) },
             onError = { msg -> errorMsg = msg }
         )
@@ -75,14 +79,50 @@ fun BaiduLoginScreen(
             when (val s = state) {
                 is BaiduAuthState.LoggedOut, is BaiduAuthState.Loading -> {
                     Text(
-                        text = "正在获取授权码…",
+                        text = "正在获取二维码…",
                         fontSize = 16.sp,
                         color = Color(0xFF90A4AE)
                     )
                 }
 
-                is BaiduAuthState.WaitingForUser -> {
-                    DeviceCodePanel(s.codeResult)
+                is BaiduAuthState.QrReady -> {
+                    val bitmap = remember(s.session.qrcodeUrl) {
+                        generateQrBitmap(s.session.qrcodeUrl, 400)
+                    }
+                    if (bitmap != null) {
+                        Box(
+                            modifier = Modifier
+                                .background(Color.White, RoundedCornerShape(12.dp))
+                                .padding(12.dp)
+                        ) {
+                            Image(
+                                bitmap = bitmap.asImageBitmap(),
+                                contentDescription = "百度网盘登录二维码",
+                                modifier = Modifier.size(200.dp)
+                            )
+                        }
+                    }
+                    Text(
+                        text = "请用手机百度 App 扫码登录",
+                        fontSize = 16.sp,
+                        color = Color(0xFF90A4AE),
+                        textAlign = TextAlign.Center
+                    )
+                    Text(
+                        text = "二维码有效期 ${s.session.expiresIn / 60} 分钟",
+                        fontSize = 12.sp,
+                        color = Color(0xFF455A64),
+                        textAlign = TextAlign.Center
+                    )
+                }
+
+                is BaiduAuthState.Scanned -> {
+                    Text(
+                        text = "已扫码，请在手机上确认授权…",
+                        fontSize = 18.sp,
+                        color = Color(0xFFFFB74D),
+                        textAlign = TextAlign.Center
+                    )
                 }
 
                 is BaiduAuthState.LoggedIn -> {
@@ -113,66 +153,13 @@ fun BaiduLoginScreen(
     }
 }
 
-@OptIn(ExperimentalTvMaterial3Api::class)
-@Composable
-private fun DeviceCodePanel(result: BaiduDeviceCodeResult) {
-    Column(
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        Text(
-            text = "请在手机或电脑浏览器中访问：",
-            fontSize = 16.sp,
-            color = Color(0xFF90A4AE)
-        )
-
-        // 突出显示验证 URL
-        Box(
-            modifier = Modifier
-                .background(Color(0xFF1A237E), RoundedCornerShape(8.dp))
-                .padding(horizontal = 24.dp, vertical = 10.dp)
-        ) {
-            Text(
-                text = result.verificationUrl,
-                fontSize = 16.sp,
-                color = Color(0xFFBBDEFB),
-                fontWeight = FontWeight.Medium
-            )
+private fun generateQrBitmap(content: String, sizePx: Int): Bitmap? = runCatching {
+    val bits = QRCodeWriter().encode(content, BarcodeFormat.QR_CODE, sizePx, sizePx)
+    Bitmap.createBitmap(sizePx, sizePx, Bitmap.Config.RGB_565).also { bmp ->
+        for (x in 0 until sizePx) {
+            for (y in 0 until sizePx) {
+                bmp.setPixel(x, y, if (bits[x, y]) android.graphics.Color.BLACK else android.graphics.Color.WHITE)
+            }
         }
-
-        Text(
-            text = "然后输入以下验证码：",
-            fontSize = 16.sp,
-            color = Color(0xFF90A4AE)
-        )
-
-        // 大字显示验证码
-        Box(
-            modifier = Modifier
-                .background(Color(0xFF0D47A1), RoundedCornerShape(12.dp))
-                .padding(horizontal = 40.dp, vertical = 20.dp)
-        ) {
-            Text(
-                text = result.userCode,
-                fontSize = 48.sp,
-                fontWeight = FontWeight.Bold,
-                color = Color.White,
-                letterSpacing = 8.sp
-            )
-        }
-
-        Text(
-            text = "授权成功后本页面将自动跳转",
-            fontSize = 14.sp,
-            color = Color(0xFF607D8B),
-            textAlign = TextAlign.Center
-        )
-
-        Text(
-            text = "验证码有效期 ${result.expiresIn / 60} 分钟",
-            fontSize = 12.sp,
-            color = Color(0xFF455A64),
-            textAlign = TextAlign.Center
-        )
     }
-}
+}.getOrNull()

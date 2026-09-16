@@ -9,15 +9,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
-/**
- * 百度网盘 Device Code Flow 登录状态管理。
- *
- * 用法：
- * 1. 调 [startDeviceLogin]，等待回调 [onCodeReady]；
- * 2. UI 展示 user_code 和验证链接（二维码 + 说明文字）；
- * 3. 用户在手机/PC 上授权后，自动轮询拿到 token，回调 [onSuccess]；
- * 4. 应用保存 token 后调 [restoreFromToken] 恢复状态。
- */
 class BaiduAuthManager {
 
     private val scope = CoroutineScope(Dispatchers.IO + Job())
@@ -48,59 +39,49 @@ class BaiduAuthManager {
     }
 
     /**
-     * 开始 Device Code 登录流程。
+     * 开始二维码登录流程。
      *
-     * [onCodeReady] 在拿到 Device Code 后调用（切到主线程前由调用者用 withContext 处理）；
-     * [onSuccess] 在授权完成后调用，携带新 access_token 和 refresh_token。
+     * 流程：获取 QR 码 → UI 显示 → 每 3 秒轮询扫码状态 → 授权后用 code 换 token。
+     * [onSuccess] 授权完成后调用，携带 access_token 和 refresh_token。
      */
-    fun startDeviceLogin(
-        onCodeReady: (result: BaiduDeviceCodeResult) -> Unit,
+    fun startQrLogin(
         onSuccess: (accessToken: String, refreshToken: String) -> Unit,
         onError: (msg: String) -> Unit
     ) {
         _state.value = BaiduAuthState.Loading
         scope.launch {
             try {
-                val codeResult = api.getDeviceCode()
-                _state.value = BaiduAuthState.WaitingForUser(codeResult)
-                onCodeReady(codeResult)
+                val session = api.getQrCode()
+                _state.value = BaiduAuthState.QrReady(session)
 
-                var attempts = 0
-                val maxAttempts = codeResult.expiresIn / codeResult.interval.coerceAtLeast(5)
-                var intervalMs = codeResult.interval * 1000L
-
-                while (attempts < maxAttempts) {
-                    delay(intervalMs)
-                    attempts++
-                    when (val result = api.pollToken(codeResult.deviceCode)) {
-                        is BaiduPollResult.Success -> {
-                            accessToken = result.token.accessToken
-                            refreshToken = result.token.refreshToken
-                            _state.value = BaiduAuthState.LoggedIn(result.token.accessToken)
-                            onSuccess(result.token.accessToken, result.token.refreshToken)
+                val maxAttempts = session.expiresIn / 3
+                repeat(maxAttempts) { attempt ->
+                    delay(3_000)
+                    when (val status = api.pollQrStatus(session.qrcodeKey)) {
+                        is BaiduQrStatus.Waiting -> Unit
+                        is BaiduQrStatus.Scanned -> _state.value = BaiduAuthState.Scanned
+                        is BaiduQrStatus.Authorized -> {
+                            val token = api.exchangeToken(status.code)
+                            accessToken = token.accessToken
+                            refreshToken = token.refreshToken
+                            _state.value = BaiduAuthState.LoggedIn(token.accessToken)
+                            onSuccess(token.accessToken, token.refreshToken)
                             return@launch
                         }
-                        is BaiduPollResult.Pending -> Unit
-                        is BaiduPollResult.SlowDown -> intervalMs += 5_000
-                        is BaiduPollResult.Denied -> {
+                        is BaiduQrStatus.Denied -> {
                             _state.value = BaiduAuthState.LoggedOut
-                            onError("用户拒绝授权")
+                            onError("用户取消授权")
                             return@launch
                         }
-                        is BaiduPollResult.Expired -> {
+                        is BaiduQrStatus.Expired -> {
                             _state.value = BaiduAuthState.LoggedOut
-                            onError("验证码已过期，请重新获取")
-                            return@launch
-                        }
-                        is BaiduPollResult.Error -> {
-                            _state.value = BaiduAuthState.LoggedOut
-                            onError(result.message)
+                            onError("二维码已过期，请重新获取")
                             return@launch
                         }
                     }
                 }
                 _state.value = BaiduAuthState.LoggedOut
-                onError("等待授权超时，请重试")
+                onError("等待扫码超时，请重试")
             } catch (e: Exception) {
                 _state.value = BaiduAuthState.LoggedOut
                 onError("登录失败：${e.message}")
@@ -131,6 +112,7 @@ class BaiduAuthManager {
 sealed class BaiduAuthState {
     data object LoggedOut : BaiduAuthState()
     data object Loading : BaiduAuthState()
-    data class WaitingForUser(val codeResult: BaiduDeviceCodeResult) : BaiduAuthState()
+    data class QrReady(val session: BaiduQrSession) : BaiduAuthState()
+    data object Scanned : BaiduAuthState()
     data class LoggedIn(val accessToken: String) : BaiduAuthState()
 }
