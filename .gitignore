@@ -14,6 +14,3 @@ captures/
 # 本地工具 / agent 配置，与工程构建无关
 .reasonix/
 reasonix.toml
-
-# 本地编译的原生扩展 AAR（体积大，需在 Mac 上编译，见 DEV_SETUP.md）
-app/libs/*.aar
