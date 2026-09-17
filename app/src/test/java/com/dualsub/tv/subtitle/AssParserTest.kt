@@ -115,6 +115,9 @@ class AssParserTest {
     }
 
     // ──────────────── ASS override 特效解析
+    //
+    // 说明：Kotlin 的反引号标识符不允许出现反斜杠，所以下面这些测试名里
+    // 用 an / pos / fad / move / c / b i u / k / r / t 直接写标签名，不带前导 "\"。
 
     private fun singleDialogue(text: String) = """
         [Events]
@@ -123,15 +126,15 @@ class AssParserTest {
     """.trimIndent()
 
     @Test
-    fun `parses \an alignment tag`() {
-        val cues = AssParser.parse(singleDialogue("""\{\an8}顶部居中"""))
+    fun `parses an alignment tag`() {
+        val cues = AssParser.parse(singleDialogue("""{\an8}顶部居中"""))
         assertEquals(1, cues.size)
         assertEquals(8, cues[0].assOverride?.alignment)
         assertEquals("顶部居中", cues[0].text)
     }
 
     @Test
-    fun `parses \pos absolute position with PlayResX and PlayResY`() {
+    fun `parses pos absolute position with PlayResX and PlayResY`() {
         val content = """
             [Script Info]
             PlayResX: 1920
@@ -149,8 +152,8 @@ class AssParserTest {
     }
 
     @Test
-    fun `parses \fad fade in and out durations`() {
-        val cues = AssParser.parse(singleDialogue("""\{\fad(200,300)}淡入淡出"""))
+    fun `parses fad fade in and out durations`() {
+        val cues = AssParser.parse(singleDialogue("""{\fad(200,300)}淡入淡出"""))
         assertEquals(1, cues.size)
         val ov = cues[0].assOverride!!
         assertEquals(200, ov.fadeInMs)
@@ -158,7 +161,7 @@ class AssParserTest {
     }
 
     @Test
-    fun `parses \move animation coordinates`() {
+    fun `parses move animation coordinates`() {
         val content = """
             [Script Info]
             PlayResX: 640
@@ -177,8 +180,8 @@ class AssParserTest {
     }
 
     @Test
-    fun `parses inline color tag \c`() {
-        val cues = AssParser.parse(singleDialogue("""\{\c&H0000FF&}红色文字"""))
+    fun `parses inline color tag c`() {
+        val cues = AssParser.parse(singleDialogue("""{\c&H0000FF&}红色文字"""))
         assertEquals(1, cues.size)
         val span = cues[0].assOverride!!.spans.first()
         // ASS \c&H0000FF& = BGR: 00/00/FF → RGB: FF/00/00 = 不透明红
@@ -186,8 +189,8 @@ class AssParserTest {
     }
 
     @Test
-    fun `parses \b \i \u style tags`() {
-        val cues = AssParser.parse(singleDialogue("""\{\b1\i1\u1}样式"""))
+    fun `parses b i u style tags`() {
+        val cues = AssParser.parse(singleDialogue("""{\b1\i1\u1}样式"""))
         assertEquals(1, cues.size)
         val span = cues[0].assOverride!!.spans.first()
         assertEquals(true, span.bold)
@@ -196,8 +199,8 @@ class AssParserTest {
     }
 
     @Test
-    fun `parses karaoke \k segments`() {
-        val cues = AssParser.parse(singleDialogue("""\{\k50}你{\k50}好"""))
+    fun `parses karaoke k segments`() {
+        val cues = AssParser.parse(singleDialogue("""{\k50}你{\k50}好"""))
         assertEquals(1, cues.size)
         val segs = cues[0].assOverride!!.karaokeSegments
         assertEquals(2, segs.size)
@@ -207,8 +210,8 @@ class AssParserTest {
     }
 
     @Test
-    fun `parses \r reset clears style span`() {
-        val cues = AssParser.parse(singleDialogue("""\{\c&H0000FF&}红\r白"""))
+    fun `parses r reset clears style span`() {
+        val cues = AssParser.parse(singleDialogue("""{\c&H0000FF&}红{\r}白"""))
         assertEquals(1, cues.size)
         val spans = cues[0].assOverride!!.spans
         // 只有"红"这段有颜色，\r 之后恢复默认
@@ -218,8 +221,8 @@ class AssParserTest {
     }
 
     @Test
-    fun `parses \t color transform`() {
-        val cues = AssParser.parse(singleDialogue("""\{\t(0,1000,\c&H00FF00&)}渐变"""))
+    fun `parses t color transform`() {
+        val cues = AssParser.parse(singleDialogue("""{\t(0,1000,\c&H00FF00&)}渐变"""))
         assertEquals(1, cues.size)
         val t = cues[0].assOverride!!.transforms.first()
         assertEquals(0L, t.t1Ms)

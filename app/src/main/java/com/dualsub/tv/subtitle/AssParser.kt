@@ -122,7 +122,8 @@ object AssParser : SubtitleParser {
 internal object AssOverrideParser {
 
     // 匹配整个 override 块，或块之间的纯文字
-    private val SEGMENT = Regex("""\{[^}]*}|[^{]+""")
+    // 同上：末尾 `}` 必须转义，否则 ICU 直接报 PatternSyntaxException（JVM 却接受）
+    private val SEGMENT = Regex("""\{[^}]*\}|[^{]+""")
     // 单个标签：反斜杠 + 标签名 + 可选参数（括号内容 或 非反斜杠字符序列）
     private val TAG = Regex("""\\([a-zA-Z]+)(\([^)]*\)|[^\\{}\r\n]*)""")
 

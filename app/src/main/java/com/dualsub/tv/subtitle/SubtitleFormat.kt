@@ -14,6 +14,7 @@ enum class SubtitleFormat(
     SRT("SubRip (.srt)", setOf("srt")),
     VTT("WebVTT (.vtt)", setOf("vtt", "webvtt")),
     ASS("ASS/SSA (.ass)", setOf("ass", "ssa")),
+    CUES("内嵌字幕", emptySet()),
     UNKNOWN("未知格式", emptySet());
 
     companion object {
@@ -22,6 +23,12 @@ enum class SubtitleFormat(
         const val MIME_SUBVIEWER = "application/x-subviewer"
         const val MIME_VTT = "text/vtt"
         const val MIME_SSA = "text/x-ssa"
+
+        /** Media3 的二进制 Cue 编码；原始字幕格式另从 codecs 读取。 */
+        const val MIME_MEDIA3_CUES = "application/x-media3-cues"
+
+        fun isBitmapMime(mimeType: String?): Boolean = mimeType?.lowercase()?.substringBefore(';')?.trim() in
+            setOf("application/pgs", "application/dvbsubs", "application/vobsub")
 
         /** 按文件名/路径后缀判断格式。 */
         fun fromFileName(fileName: String?): SubtitleFormat {
@@ -38,6 +45,7 @@ enum class SubtitleFormat(
             when (mimeType?.lowercase()?.substringBefore(';')?.trim()) {
                 MIME_SUBRIP,
                 MIME_SUBVIEWER -> SRT
+                MIME_MEDIA3_CUES, "application/pgs", "application/dvbsubs", "application/vobsub" -> CUES
 
                 MIME_VTT,
                 "text/webvtt" -> VTT

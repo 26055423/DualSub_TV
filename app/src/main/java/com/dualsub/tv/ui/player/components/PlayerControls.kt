@@ -34,6 +34,7 @@ import androidx.tv.material3.Button
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.Text
 import com.dualsub.tv.ui.format.formatTime
+import com.dualsub.tv.ui.theme.BeiPalette
 
 /**
  * 播放控制条：进度、时间、播放/暂停、快进退，以及两路字幕的入口。
@@ -140,7 +141,7 @@ private fun SeekableProgressBar(
             .fillMaxWidth()
             .height(6.dp)
             .clip(RoundedCornerShape(3.dp))
-            .background(Color.White.copy(alpha = 0.28f))
+            .background(Color.White.copy(alpha = 0.22f))
             .focusRequester(focusRequester)
             .focusable()
             .onKeyEvent { event ->
@@ -156,7 +157,7 @@ private fun SeekableProgressBar(
             modifier = Modifier
                 .fillMaxWidth(fraction)
                 .fillMaxHeight()
-                .background(Color.White)
+                .background(BeiPalette.Accent)
         )
     }
 }

@@ -1,46 +1,32 @@
 package com.dualsub.tv.media
 
+import android.content.Context
 import android.media.MediaDataSource
-import android.media.MediaExtractor
 import android.media.MediaFormat
+import androidx.media3.common.C
+import androidx.media3.common.Format
+import androidx.media3.datasource.DefaultDataSource
+import androidx.media3.exoplayer.MediaExtractorCompat
+import androidx.media3.extractor.DefaultExtractorsFactory
+import androidx.media3.extractor.text.CueDecoder
+import androidx.media3.extractor.text.DefaultSubtitleParserFactory
+import androidx.media3.extractor.text.SubtitleParser
+import com.dualsub.tv.subtitle.EmbeddedAssParser
 import com.dualsub.tv.subtitle.SubtitleCue
 import com.dualsub.tv.subtitle.SubtitleFormat
-import com.dualsub.tv.subtitle.SubtitleParsers
-import com.dualsub.tv.subtitle.SubtitleTextCleaner
-import com.dualsub.tv.subtitle.SubtitleTextDecoder
 import com.dualsub.tv.subtitle.sortedAndDistinct
-import java.io.ByteArrayOutputStream
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import java.io.IOException
 import java.nio.ByteBuffer
 
 /**
- * 视频内嵌字幕轨的枚举与抽取。
- *
- * 用 Android 框架自带的 [MediaExtractor] 实现，不引入任何额外依赖，
- * 也不依赖 ExoPlayer 的字幕渲染管线（后者已被 [com.dualsub.tv.player.PlayerController] 关闭）。
- *
- * 数据源通过 [MediaDataSource] 注入，因此本地文件（[LocalMediaDataSource]）与
- * SMB 上的文件（[com.dualsub.tv.network.smb.SmbMediaDataSource]）走的是同一套逻辑。
- *
- * 不同容器的字幕样本形态差别很大，这里逐一兜住：
- * - MP4/MKV 里存放的是**完整 SRT/ASS 文档**（样本自带时间戳）→ 直接交给解析器；
- * - MKV 里存放的是**逐条纯文本**（时间在样本的时间戳上）→ 用相邻样本的时间戳构造区间；
- * - 空样本用于「清空字幕」→ 跳过，不产生 cue。
- *
- * 已知不支持：MP4 的 `tx3g` 二进制字幕（可读轨道但不会解析出文本）。
+ * Media3 负责容器解析；ASS 保留原始事件和初始化数据，交给现有特效解析器。
+ * 其他受支持的字幕继续由 Media3 转成 Cue。按轨按需读取，并逐批交付，
+ * 不必等整个网络文件扫描完才显示第一句。失败向调用方传播，不能缓存为成功的空轨。
  */
 object EmbeddedSubtitleReader {
-
-    /** 单条样本上限。字幕样本通常只有几百字节，1 MiB 足够宽裕。 */
-    private const val SAMPLE_BUFFER_SIZE = 1 shl 20
-
-    /** 纯文本样本没有自带结束时间时的默认显示时长。 */
-    private const val DEFAULT_CUE_DURATION_MS = 3000L
-
-    /**
-     * 轨道标题的 MediaFormat key。
-     * 框架没有公开 `KEY_TITLE` 常量，但容器里确实会写这个字段，因此用字面量读取。
-     */
-    private const val KEY_TRACK_TITLE = "title"
+    private const val MAX_SAMPLE_BYTES = 16 * 1024 * 1024
 
     data class TrackInfo(
         val index: Int,
@@ -49,118 +35,195 @@ object EmbeddedSubtitleReader {
         val title: String?,
         val format: SubtitleFormat
     ) {
+        val isBitmap: Boolean get() = SubtitleFormat.isBitmapMime(mimeType)
         val label: String
             get() = buildString {
-                append(format.displayName)
+                append(if (isBitmap) "图片字幕，暂不支持" else format.displayName)
                 language?.takeIf { it.isNotBlank() }?.let { append(" · ").append(it) }
                 title?.takeIf { it.isNotBlank() }?.let { append(" · ").append(it) }
                 append("（内嵌 #").append(index).append('）')
             }
     }
 
-    /** 列出视频里所有可用的字幕轨。[sourceFactory] 每次调用需返回一个**新的**数据源。 */
-    fun listTracks(sourceFactory: () -> MediaDataSource): List<TrackInfo> =
-        withExtractor(sourceFactory) { extractor ->
+    // 返回 false 时 Media3 原样传递样本和 csd，不会先剥掉 ASS 特效标签。
+    internal fun extractorsFactory(): DefaultExtractorsFactory {
+        return DefaultExtractorsFactory().setSubtitleParserFactory(subtitleParserFactory())
+    }
+
+    internal fun subtitleParserFactory(): SubtitleParser.Factory {
+        val default = DefaultSubtitleParserFactory()
+        return object : SubtitleParser.Factory by default {
+                override fun supportsFormat(format: Format): Boolean =
+                    SubtitleFormat.fromMimeType(format.sampleMimeType) != SubtitleFormat.ASS &&
+                        default.supportsFormat(format)
+        }
+    }
+
+    suspend fun listTracks(context: Context, sourceFactory: () -> MediaDataSource): List<TrackInfo> {
+        sourceFactory().use { source ->
+            if (isMatroska(source)) return SparseMatroskaReader.listTracks(source)
+        }
+        return listTracksCompat(context, sourceFactory)
+    }
+
+    internal suspend fun readWindow(
+        context: Context, sourceFactory: () -> MediaDataSource,
+        tracks: Set<Int>, startMs: Long, endMs: Long,
+        onProgress: (SubtitleWindow) -> Unit = {}
+    ): SubtitleWindow {
+        require(startMs >= 0 && endMs > startMs)
+        sourceFactory().use { source ->
+            if (isMatroska(source)) return SparseMatroskaReader.readWindow(source, tracks, startMs, endMs, onProgress)
+        }
+        // Other supported containers retain the Media3 path, but never scan to EOF.
+        val cues = linkedMapOf<Int, List<SubtitleCue>>()
+        for (track in tracks) cues[track] = readCues(context, sourceFactory, track, startMs, endMs)
+        return SubtitleWindow(startMs, endMs, cues)
+    }
+
+    private fun isMatroska(source: MediaDataSource): Boolean {
+        val bytes = ByteArray(4)
+        var read = 0
+        while (read < bytes.size) {
+            val count = source.readAt(read.toLong(), bytes, read, bytes.size - read)
+            if (count <= 0) return false
+            read += count
+        }
+        return bytes.contentEquals(byteArrayOf(0x1A, 0x45, 0xDF.toByte(), 0xA3.toByte()))
+    }
+
+    private suspend fun listTracksCompat(context: Context, sourceFactory: () -> MediaDataSource): List<TrackInfo> =
+        withExtractor(context, sourceFactory) { extractor ->
             (0 until extractor.trackCount).mapNotNull { index ->
-                val format = runCatching { extractor.getTrackFormat(index) }.getOrNull()
-                    ?: return@mapNotNull null
-                val mime = runCatching { format.getString(MediaFormat.KEY_MIME) }.getOrNull()
-                val subtitleFormat = SubtitleFormat.fromMimeType(mime)
-                if (subtitleFormat == SubtitleFormat.UNKNOWN) return@mapNotNull null
-                TrackInfo(
-                    index = index,
-                    mimeType = mime,
-                    language = runCatching { format.getString(MediaFormat.KEY_LANGUAGE) }.getOrNull(),
-                    title = runCatching { format.getString(KEY_TRACK_TITLE) }.getOrNull(),
-                    format = subtitleFormat
-                )
+                val mediaFormat = extractor.getTrackFormat(index)
+                val mime = mediaFormat.getString(MediaFormat.KEY_MIME)
+                val originalMime = mediaFormat.getString(MediaFormat.KEY_CODECS_STRING) ?: mime
+                val format = SubtitleFormat.fromMimeType(originalMime)
+                    .takeIf { it != SubtitleFormat.UNKNOWN }
+                    ?: SubtitleFormat.fromMimeType(mime)
+                if (format == SubtitleFormat.UNKNOWN) return@mapNotNull null
+                TrackInfo(index, originalMime,
+                    mediaFormat.getString(MediaFormat.KEY_LANGUAGE),
+                    mediaFormat.getString("label") ?: mediaFormat.getString("title"), format)
             }
-        } ?: emptyList()
+        }
 
-    /** 抽取指定字幕轨的全部字幕。 */
-    fun readCues(sourceFactory: () -> MediaDataSource, trackIndex: Int): List<SubtitleCue> =
-        withExtractor(sourceFactory) { extractor ->
-            runCatching {
-                extractor.selectTrack(trackIndex)
-                decodeSamples(readSamples(extractor))
-            }.getOrDefault(emptyList())
-        } ?: emptyList()
-
-    private fun <T> withExtractor(
+    /** onProgress 在读取线程收到不可变快照；调用方负责切回 UI 线程。 */
+    suspend fun readCues(
+        context: Context,
         sourceFactory: () -> MediaDataSource,
-        block: (MediaExtractor) -> T
-    ): T? {
-        val extractor = MediaExtractor()
+        trackIndex: Int,
+        startMs: Long = 0,
+        endMs: Long = Long.MAX_VALUE,
+        onProgress: suspend (List<SubtitleCue>) -> Unit = {}
+    ): List<SubtitleCue> = withExtractor(context, sourceFactory,
+        byteBudget = if (endMs == Long.MAX_VALUE) Long.MAX_VALUE else 16L * 1024 * 1024
+    ) { extractor ->
+        require(trackIndex in 0 until extractor.trackCount) { "字幕轨 #$trackIndex 已不存在" }
+        val format = extractor.getTrackFormat(trackIndex)
+        val mime = format.getString(MediaFormat.KEY_MIME)
+        if (SubtitleFormat.isBitmapMime(format.getString(MediaFormat.KEY_CODECS_STRING) ?: mime)) return@withExtractor emptyList()
+        val assParser = if (SubtitleFormat.fromMimeType(mime) == SubtitleFormat.ASS) {
+            val initialization = generateSequence(0) { it + 1 }
+                .takeWhile { format.containsKey("csd-$it") }
+                .map { index ->
+                    val buffer = requireNotNull(format.getByteBuffer("csd-$index")).duplicate()
+                    ByteArray(buffer.remaining()).also { buffer.get(it) }
+                }.toList()
+            EmbeddedAssParser(initialization)
+        } else null
+        if (assParser == null && mime != SubtitleFormat.MIME_MEDIA3_CUES) {
+            throw IOException("尚不支持该内嵌字幕编码：$mime")
+        }
+        extractor.selectTrack(trackIndex)
+        if (startMs > 0) extractor.seekTo(startMs * 1000, MediaExtractorCompat.SEEK_TO_PREVIOUS_SYNC)
+        val decoder = CueDecoder()
+        val cues = ArrayList<SubtitleCue>()
+        var buffer = ByteBuffer.allocate(64 * 1024)
+        var lastPublish = 0L
+        while (true) {
+            currentCoroutineContext().ensureActive()
+            val size = extractor.sampleSize
+            if (size < 0) break
+            if (size > MAX_SAMPLE_BYTES) throw IOException("字幕样本过大：$size 字节")
+            if (size > buffer.capacity()) buffer = ByteBuffer.allocate(size.toInt())
+            buffer.clear()
+            val read = extractor.readSampleData(buffer, 0)
+            if (read < 0) break
+            val timeUs = extractor.sampleTime
+            if (timeUs / 1000 > endMs) break
+            val bytes = ByteArray(read)
+            buffer.position(0)
+            buffer.get(bytes)
+            if (assParser != null) {
+                cues += assParser.parse(bytes, timeUs)
+            } else {
+                // 按 MIME 解码；失败就报错，绝不把二进制退回文本嗅探。
+                val timing = decoder.decode(timeUs, bytes, 0, bytes.size)
+                val startUs = timing.startTimeUs.takeIf { it != C.TIME_UNSET } ?: timeUs
+                val startMs = startUs / 1000
+                val endMs = timing.endTimeUs.takeIf { it != C.TIME_UNSET && it > startUs }
+                    ?.div(1000) ?: (startMs + 3000L)
+                timing.cues.forEach { cue ->
+                    if (cue.bitmap != null) return@forEach
+                    val text = cue.text?.toString().orEmpty()
+                    if (text.isNotBlank()) cues += SubtitleCue(startMs, endMs, text)
+                }
+            }
+            val now = System.nanoTime()
+            if (cues.isNotEmpty() && (lastPublish == 0L || now - lastPublish >= 500_000_000L)) {
+                onProgress(cues.sortedAndDistinct())
+                lastPublish = now
+            }
+            if (!extractor.advance()) break
+        }
+        cues.sortedAndDistinct()
+    }
+
+    private suspend fun <T> withExtractor(
+        context: Context,
+        sourceFactory: () -> MediaDataSource,
+        byteBudget: Long = Long.MAX_VALUE,
+        block: suspend (MediaExtractorCompat) -> T
+    ): T {
+        val coroutine = currentCoroutineContext()
+        coroutine.ensureActive()
+        val extractor = MediaExtractorCompat(extractorsFactory(), DefaultDataSource.Factory(context))
         var source: MediaDataSource? = null
-        return try {
+        var sourceFailure: Exception? = null
+        var bytesRead = 0L
+        try {
             source = sourceFactory()
-            extractor.setDataSource(source)
-            block(extractor)
-        } catch (_: Exception) {
-            null
+            val opened = source
+            // advance() 可能跳过大量无字幕的媒体包，底层读取处也检查取消。
+            extractor.setDataSource(object : MediaDataSource() {
+                override fun readAt(position: Long, buffer: ByteArray, offset: Int, size: Int): Int {
+                    try {
+                        coroutine.ensureActive()
+                        if (bytesRead > byteBudget - size) throw IOException("字幕读取超过本次流量上限")
+                        return opened.readAt(position, buffer, offset, size).also { if (it > 0) bytesRead += it }
+                    } catch (error: Exception) {
+                        sourceFailure = error
+                        throw error
+                    }
+                }
+                override fun getSize(): Long = try {
+                    opened.size
+                } catch (error: Exception) {
+                    sourceFailure = error
+                    throw error
+                }
+                override fun close() = Unit
+            })
+            val result = block(extractor)
+            // MediaExtractorCompat treats read exceptions as EOF internally.
+            // A disconnected SMB stream must not become a successfully cached partial track.
+            coroutine.ensureActive()
+            sourceFailure?.let { throw it }
+            return result
         } finally {
             runCatching { extractor.release() }
-            source?.let { dataSource -> runCatching { dataSource.close() } }
+            runCatching { source?.close() }
         }
     }
-
-    private data class Sample(val timeUs: Long, val bytes: ByteArray)
-
-    private fun readSamples(extractor: MediaExtractor): List<Sample> {
-        val samples = ArrayList<Sample>()
-        val buffer = ByteBuffer.allocate(SAMPLE_BUFFER_SIZE)
-        while (true) {
-            val size = runCatching { extractor.readSampleData(buffer, 0) }.getOrNull() ?: break
-            if (size < 0) break
-
-            val timeUs = extractor.sampleTime
-            val bytes = ByteArray(size)
-            buffer.position(0)
-            buffer.limit(size)
-            buffer.get(bytes)
-            buffer.clear()
-
-            samples += Sample(timeUs, bytes)
-            if (!runCatching { extractor.advance() }.getOrDefault(false)) break
-        }
-        return samples
-    }
-
-    private fun decodeSamples(samples: List<Sample>): List<SubtitleCue> {
-        if (samples.isEmpty()) return emptyList()
-
-        // 情形一：整条轨拼起来就是一份完整字幕文档
-        val joined = ByteArrayOutputStream().apply {
-            samples.forEach { write(it.bytes) }
-        }.toByteArray()
-        val wholeDocument = SubtitleParsers.parseByFileName(joined, null)
-        if (wholeDocument.isNotEmpty()) return wholeDocument
-
-        // 情形二：逐个样本是纯文本，时间取样本时间戳
-        val cues = ArrayList<SubtitleCue>(samples.size)
-        samples.forEachIndexed { index, sample ->
-            val parsed = SubtitleParsers.parseByFileName(sample.bytes, null)
-            if (parsed.isNotEmpty()) {
-                cues += parsed
-                return@forEachIndexed
-            }
-
-            val text = plainText(sample.bytes)
-            if (text.isEmpty()) return@forEachIndexed
-
-            val startMs = sample.timeUs / 1000
-            val nextStartMs = samples.getOrNull(index + 1)?.timeUs?.div(1000)
-            val endMs = nextStartMs?.takeIf { it > startMs } ?: (startMs + DEFAULT_CUE_DURATION_MS)
-            cues += SubtitleCue(startMs, endMs, text)
-        }
-        return cues.sortedAndDistinct()
-    }
-
-    private fun plainText(bytes: ByteArray): String = SubtitleTextCleaner.tidy(
-        SubtitleTextCleaner.stripAssOverrides(
-            SubtitleTextCleaner.stripHtmlTags(
-                SubtitleTextDecoder.decode(bytes)
-            )
-        )
-    )
 }

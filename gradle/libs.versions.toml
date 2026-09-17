@@ -9,11 +9,15 @@ lifecycle = "2.8.7"
 compose = "1.10.3"
 tvMaterial = "1.0.0"
 tvFoundation = "1.0.0"
-media3 = "1.4.1"
+media3 = "1.6.0"
+# 播放引擎：libVLC。选它是为了 RM/RMVB 这类 Media3 架构下无解的老格式 ——
+# VLC 内置完整 FFmpeg（含 RealMedia 容器解析 + RealVideo/Cook 软解）。
+# 注意只能用 3.x：4.x 目前只有 4.0.0-eap* 预览版。
+libvlc = "3.6.5"
 coroutines = "1.9.0"
 datastore = "1.1.1"
-# 纯 Java 的 SMB2/SMB3 客户端，负责浏览与播放。smbj 0.13 并不传递 BouncyCastle，
-# 但它的 NTLM 认证需要 BC 提供的 MD4，所以下面显式引入。
+# 纯 Java 的 SMB2/SMB3 客户端。改用 libVLC 播放后，smbj 仍需负责浏览与列目录；
+# 它的 NTLM 认证需要 BC 提供的 MD4，所以下面显式引入 BouncyCastle。
 smbj = "0.13.0"
 # 只用来列举服务器上的共享：smbj 只暴露了文件级 API（Session.connectShare），
 # 而「这台服务器有哪些共享」要走 SRVSVC 的 NetShareEnumAll，jcifs-ng 自带这个能力。
@@ -40,6 +44,7 @@ androidx-tv-material = { group = "androidx.tv", name = "tv-material", version.re
 androidx-tv-foundation = { group = "androidx.tv", name = "tv-foundation", version.ref = "tvFoundation" }
 androidx-media3-exoplayer = { group = "androidx.media3", name = "media3-exoplayer", version.ref = "media3" }
 androidx-media3-common = { group = "androidx.media3", name = "media3-common", version.ref = "media3" }
+libvlc-all = { group = "org.videolan.android", name = "libvlc-all", version.ref = "libvlc" }
 androidx-datastore-preferences = { group = "androidx.datastore", name = "datastore-preferences", version.ref = "datastore" }
 kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "coroutines" }
 kotlinx-coroutines-test = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-test", version.ref = "coroutines" }

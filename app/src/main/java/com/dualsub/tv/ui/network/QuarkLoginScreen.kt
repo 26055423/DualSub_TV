@@ -35,8 +35,6 @@ import com.dualsub.tv.network.webdrive.QuarkAuthState
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.EncodeHintType
 import com.google.zxing.qrcode.QRCodeWriter
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 
 /**
  * 夸克网盘扫码登录页。
@@ -57,12 +55,11 @@ fun QuarkLoginScreen(
 
     LaunchedEffect(Unit) {
         quarkAuth.startQrLogin(
+            // 注意：本回调由 QuarkAuthManager 的 IO 协程直接调用，**已经在后台线程**。
+            // 所以这里不能（也不需要）再套 withContext —— 该 lambda 不是 suspend 函数，
+            // 套了会直接编译报错「Suspension functions can only be called within coroutine body」。
             onQrReady = { qrUrl ->
-                // 在 IO 线程生成二维码 bitmap
-                val bitmap = withContext(Dispatchers.Default) {
-                    generateQrBitmap(qrUrl, 400)
-                }
-                qrBitmap = bitmap
+                qrBitmap = generateQrBitmap(qrUrl, 400)
             },
             onScanned = { /* state 已更新，UI 响应 */ },
             onSuccess = { cookie -> onSuccess(cookie) },

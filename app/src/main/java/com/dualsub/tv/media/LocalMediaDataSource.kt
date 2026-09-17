@@ -4,6 +4,7 @@ import android.content.Context
 import android.media.MediaDataSource
 import android.net.Uri
 import java.io.FileInputStream
+import java.io.IOException
 
 /**
  * 本地 `content://` / `file://` 的随机读实现。
@@ -18,31 +19,21 @@ import java.io.FileInputStream
 class LocalMediaDataSource(context: Context, uri: Uri) : MediaDataSource() {
 
     private val descriptor = context.contentResolver.openFileDescriptor(uri, "r")
+        ?: throw IOException("无法打开本地媒体")
 
-    private val stream: FileInputStream? = descriptor?.let {
-        runCatching { FileInputStream(it.fileDescriptor) }.getOrNull()
-    }
+    private val stream = FileInputStream(descriptor.fileDescriptor)
 
     override fun readAt(position: Long, buffer: ByteArray, offset: Int, length: Int): Int {
-        val handle = stream ?: return -1
+        if (length == 0) return 0
         if (position < 0) return -1
-        return try {
-            handle.channel.position(position)
-            val read = handle.read(buffer, offset, length)
-            if (read <= 0) -1 else read
-        } catch (_: Exception) {
-            -1
-        }
+        stream.channel.position(position)
+        return stream.read(buffer, offset, length)
     }
 
-    override fun getSize(): Long = try {
-        stream?.channel?.size() ?: -1L
-    } catch (_: Exception) {
-        -1L
-    }
+    override fun getSize(): Long = stream.channel.size()
 
     override fun close() {
-        runCatching { stream?.close() }
-        runCatching { descriptor?.close() }
+        runCatching { stream.close() }
+        runCatching { descriptor.close() }
     }
 }

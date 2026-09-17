@@ -16,7 +16,11 @@ interface SubtitleParser {
 internal object SubtitleTextCleaner {
 
     private val HTML_TAG = Regex("""</?[a-zA-Z][^>]*>""")
-    private val ASS_OVERRIDE = Regex("""\{[^}]*}""")
+    // **末尾的 `}` 必须转义**：ICU 正则引擎（Android 用的就是它）要求 `{`/`}` 严格配对，
+    // 看到孤立的 `}` 会直接抛 PatternSyntaxException；而 JVM 的 java.util.regex 宽容地接受。
+    // 后果是纯 JVM 单测全绿、真机上这个 object 连类都初始化不了，
+    // 表现成 SrtParser 抛 ExceptionInInitializerError、一条字幕都解不出。
+    private val ASS_OVERRIDE = Regex("""\{[^}]*\}""")
 
     /** 去掉 SRT/VTT 的内联标签，如 `<i>`、`<font ...>`。 */
     fun stripHtmlTags(text: String): String = HTML_TAG.replace(text, "")

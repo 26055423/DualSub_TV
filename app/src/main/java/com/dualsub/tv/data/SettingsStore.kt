@@ -7,7 +7,6 @@ import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
-import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.dualsub.tv.network.RemoteLocation
@@ -31,7 +30,7 @@ private const val KEY_REMOTE_LOCATIONS = "remote_locations"
  * 偏好持久化。
  *
  * - 字幕样式是全局的（一次调好，所有片子通用）；
- * - 断点位置与「这片用哪两路字幕」是按视频分别记录的；
+ * - 「这片用哪两路字幕」按视频分别记录，播放进度不落盘；
  * - 网络位置（SMB / DLNA 服务器）连**密码**一起明文存在应用私有目录。
  */
 class SettingsStore(private val context: Context) {
@@ -42,17 +41,19 @@ class SettingsStore(private val context: Context) {
     val secondaryStyle: Flow<SubtitleStyle> = context.settingsDataStore.data
         .map { it.readStyle(PREFIX_SECONDARY, SubtitleStyle.SECONDARY) }
 
-    fun lastPositionMs(videoKey: String): Flow<Long> = context.settingsDataStore.data
-        .map { it[longPreferencesKey("position$SEPARATOR$videoKey")] ?: 0L }
-
-    suspend fun setLastPositionMs(videoKey: String, positionMs: Long) {
+    /** Migration: discard legacy resume records. New playback sessions always start at zero. */
+    suspend fun clearPlaybackPositions() {
         context.settingsDataStore.edit { prefs ->
-            prefs[longPreferencesKey("position$SEPARATOR$videoKey")] = positionMs
+            prefs.asMap().keys.filter { it.name.startsWith("position$SEPARATOR") }
+                .forEach { prefs.remove(it) }
         }
     }
 
     fun primarySource(videoKey: String): Flow<SubtitleSource> = context.settingsDataStore.data
         .map { decodeSource(it[stringPreferencesKey("primary_source$SEPARATOR$videoKey")]) }
+
+    fun hasPrimarySource(videoKey: String): Flow<Boolean> = context.settingsDataStore.data
+        .map { it.contains(stringPreferencesKey("primary_source$SEPARATOR$videoKey")) }
 
     fun secondarySource(videoKey: String): Flow<SubtitleSource> = context.settingsDataStore.data
         .map { decodeSource(it[stringPreferencesKey("secondary_source$SEPARATOR$videoKey")]) }

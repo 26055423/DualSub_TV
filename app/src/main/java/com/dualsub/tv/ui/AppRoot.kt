@@ -49,8 +49,7 @@ fun AppRoot(externalVideoUri: Uri? = null) {
             }
             DisposableEffect(playerViewModel) {
                 onDispose {
-                    // 先落盘断点，再释放播放器；顺序不能反
-                    playerViewModel.saveProgressNow()
+                    // 离开页面即释放播放器和字幕任务，不保存进度
                     playerViewModel.release()
                 }
             }

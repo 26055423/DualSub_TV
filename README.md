@@ -20,19 +20,20 @@
 - **列出共享**：填好账号后直接向服务器要共享清单，点选即可 —— **不需要事先知道共享名**
 - **DLNA/UPnP**：一键扫描局域网内的媒体服务器，浏览并播放
 - 已添加的服务器可**编辑**（改 IP、改密码、换共享）与删除
-- 片源与本地视频走同一个播放器，断点续播、双字幕一视同仁
+- 片源与本地视频走同一个播放器，双字幕功能一视同仁
 
 **播放器**
-- Media3 / ExoPlayer 播放，硬解码走系统 `MediaCodec`
+- **libVLC 播放**（内置完整 FFmpeg，含 RealMedia 容器解析），硬解优先、解不动自动回退软解
 - 自绘控制条：播放/暂停、±10s、进度与时间
-- 断点续播：每 5 秒落盘，下次打开自动跳回（`smb://` 片源同样记住）
+- 播放进度仅在当前播放页保留；退出或换片后从头播放，首次打开会清理旧版进度记录
 
-**双字幕**
-- 主字幕、次字幕各一个独立的字幕轨状态（来源 / 字幕条目 / 时间偏移 / 样式）
+**双字幕**（机制详见下一节）
+- 主字幕、次字幕各一个独立状态（来源 / 时间偏移 / 样式）
+- **主字幕由 libVLC 的 libass 渲染** → 完整 ASS 特效、容器内嵌字体、图片字幕（PGS / DVD SPU / 蓝光）
+- **次字幕由 Compose 自绘** → 字号 / 底部距离 / 描边 / 时间偏移都能单独调
 - 字幕来源：
-  - 视频**内嵌字幕轨**（用 `MediaExtractor` 读取，不依赖播放引擎的字幕渲染）
+  - 视频**内嵌字幕轨**（主字幕交给 libVLC 选轨；次字幕用 Media3 读原始 cues）
   - **外挂字幕文件**（系统文件选择器，`srt` / `vtt` / `ass` / `ssa`，读取权限持久化）
-- 每路可单独设置字号、底部距离、描边强度、时间偏移（±100ms 步进）
 - 每个视频各自记住「上次用的哪两路字幕」
 
 **字幕解析**（`com.dualsub.tv.subtitle`，纯 Kotlin，不依赖 Android 框架与 media3）
@@ -45,21 +46,51 @@
 
 ## 双字幕是怎么做到的
 
-ExoPlayer 的内建文本渲染器**同一时刻只能输出一路字幕**，无法直接满足需求。项目的做法是：
+**两路字幕走两条完全不同的链路** —— 这是本项目的核心设计：
 
-1. **关掉内建字幕渲染** —— 在 `PlayerController` 里把 `TRACK_TYPE_TEXT` 与 `TRACK_TYPE_METADATA` 都禁用，
-   画面上不会出现任何 ExoPlayer 自己画的字幕。
-2. **视频内嵌字幕轨仍可读** —— `EmbeddedSubtitleReader` 用框架的 `MediaExtractor` 打开视频，
-   枚举 `text/*`、`application/x-subrip` 等字幕轨并抽取样本，转成统一的 `List<SubtitleCue>`。
-   数据源是注入的 `MediaDataSource`，所以本地文件与 SMB 文件共用同一套逻辑。
-   不同容器的样本形态差异都做了兼容：完整字幕文档 / 逐条纯文本（时间取样本时间戳）/ 空样本清屏。
-3. **两路都用 Compose 自绘** —— 主、次字幕各是一个 `SubtitleOverlay`，由各自的 `bottomPaddingDp`
-   决定叠放位置，因此不会互相遮挡。
-4. **同步** —— 一条 50ms 的 ticker 按 `player.currentPosition` 分别对两路做二分查找定位
-   （`SubtitleCueIndex`），各自叠加自己的时间偏移。
+| | 主字幕 | 次字幕 |
+|---|---|---|
+| 渲染者 | **libVLC**（内建 libass） | 应用自己（Compose 叠加层） |
+| 画在哪 | `VLCVideoLayout` 内部 | Compose 层，位于主字幕**之上** |
+| 能拿到 | 完整 ASS 特效 / 定位 / 卡拉 OK、**容器内嵌字体**、**图片字幕**（PGS / DVD SPU / 蓝光） | 只有文本，但字号 / 底部距离 / 描边 / 时间偏移**都能独立调** |
+| 拿不到 | 字号 / 位置 / 描边不可调（由片源特效字幕决定） | 图片字幕、完整 ASS 排版 |
 
-代价是明确接受的：ASS 的复杂特效（`{\pos}`、卡拉OK、精确定位）不做还原，只取时间轴与文本。
-后续如需增强，解析层是独立的 `SubtitleParser` 接口，替换或新增实现不影响上层。
+为什么这样分工：**特效字幕（ASS）只有 libass 渲染得对**，自绘层要追上 libass 是个无底洞；
+反过来次字幕通常只要「多显示一行字」，交给自绘反而换来完全可控的样式与位置。
+
+具体做法：
+
+1. **主字幕交给 libVLC** —— `VlcPlayerController.attachViews(layout, null, **true**, false)`
+   打开字幕 Surface 之后，VLC 会自己在 `VLCVideoLayout` 里挂一层 `SubtitlesSurfaceView` 渲染字幕。
+   选轨走 `MediaPlayer.setSpuTrack(id)`，时间偏移走 `setSpuDelay(ms)`（**这个可以动态调**）；
+   外挂字幕文件走 `addSlave(Type.Subtitle, path, …)`，**必须是本地路径**
+   （SAF 给的 `content://` libVLC 不认，要先落到 cacheDir）。
+
+   > ⚠️ **`id` 必须取自 `MediaPlayer.spuTracks`。** `IMedia.SubtitleTrack.id` 是**另一套编号**，
+   > 拿它去 `setSpuTrack()` 会直接失败 —— 真机现象是「libVLC 选不中该字幕轨」，
+   > 而 VLC 会退回它自己自动选的那条，在多字幕轨的片源上就表现为「字幕内容不对/像乱码」。
+   > 音轨那边 `IMedia.Track.id` 与 `TrackDescription.id` 不同源，是同一个坑。
+
+2. **次字幕仍由自绘链路处理** —— MKV 用 Media3 `MatroskaExtractor` 配合随机读输入，
+   其他容器用 `MediaExtractorCompat`；内嵌 ASS/SSA 复用项目自己的 `AssParser`，
+   其余按 MIME 交给 `CueDecoder`。本地与 SMB 共用随机读接口，SMB 短读会继续补齐。
+
+3. **同步** —— 一条 50ms 的 ticker 按 `player.currentPosition` 对次字幕做二分查找定位
+   （`SubtitleCueIndex`），叠加它自己的时间偏移；主字幕的偏移由 libVLC 自己算。
+
+4. **两路避让靠位置错开、不靠层级** —— 次字幕画在 Compose 层、天然盖在主字幕之上，
+   所以它用 `bottomPaddingDp` 留一个**固定余量**（默认 112dp，约两行主字幕加一条间隙）
+   来避开主字幕。主字幕特别高（三行以上或 `\pos` 到画面中部）时，到字幕设置里把这个值调大。
+
+MKV 先读轨道元数据，再按 Cues 索引读取播放位置附近的字幕窗口；跳过未选中轨道的音视频负载，
+读到字幕即交付显示，无需等整个窗口扫描完成；最多缓存四个窗口。快进、切换来源和离开播放页会取消旧任务，旧结果不会覆盖新选择。
+无 Cues 索引的 MKV 暂不支持跳转后的字幕窗口，界面会显示错误；跨越窗口起点之前很久的长字幕可能缺失。
+播放位置每 50ms 检查一次，在当前窗口结束前 15 秒请求下一窗口；每次按 30 秒分桶读取前 30 秒到后 60 秒。
+超时和读取失败会显示状态，菜单可重新读取字幕轨。
+
+字幕回归：`testDebugUnitTest` 覆盖 ASS 样本适配、SMB 短读与共享加载；
+`connectedDebugAndroidTest` 验证 ASS/SRT、短读、取消及中途断网，并用逻辑大小超过 20GiB 的
+稀疏测试容器验证跳过视频负载、双轨定位与无台词窗口；可传入 `mediaPath` 验证实片窗口与完整解析一致。
 
 ## 局域网播放是怎么做到的
 
@@ -67,7 +98,7 @@ ExoPlayer 的内建文本渲染器**同一时刻只能输出一路字幕**，无
   - [smbj]（`com.hierynomus:smbj`）负责**浏览与播放**。播放走自写的 `SmbDataSource`
     （一个 ExoPlayer `DataSource`），直接把 `smb://host/share/path` 交给播放器 ——
     相比「起本地 HTTP 代理再转发」，少一个组件、没有端口冲突，而且天然支持随机读，
-    所以**拖进度条与断点续播都能正常工作**。
+    所以支持拖动进度条。
   - [jcifs-ng]（`eu.agno3.jcifs:jcifs-ng`）**只负责列举共享**。smbj 只暴露文件级 API
     （`Session.connectShare`），没有 SRVSVC 的 `NetShareEnumAll`；而 jcifs-ng 对
     `smb://host/` 调 `listFiles()` 得到的就是共享清单 —— 这正是其他播放器
@@ -137,7 +168,8 @@ adb install -r app\build\outputs\apk\debug\app-debug.apk
 
 | 项 | 选择 | 说明 |
 |---|---|---|
-| 播放引擎 | Media3 / ExoPlayer 1.4.1 | 纯 JVM 依赖；双字幕由自绘实现 |
+| 播放引擎 | libVLC 3.6.5；次字幕提取用 Media3 1.6.0 | **主字幕交给 libVLC 的 libass 渲染**，次字幕自绘 —— 见「双字幕是怎么做到的」 |
+| 音频输出 | `--aout=opensles_android` | **只出 PCM（即下混）**。唯一支持 IEC61937 直通的 `android_audiotrack` 在本机起不来，详见「已知限制」 |
 | SMB 浏览播放 | `com.hierynomus:smbj` 0.13.0 | SMB2/SMB3；需排除其传递的 bcprov，见下 |
 | SMB 列举共享 | `eu.agno3.jcifs:jcifs-ng` 2.1.10 | 提供 SRVSVC `NetShareEnumAll`，smbj 没有这层 |
 | 摘要算法 | `org.bouncycastle:bcprov-jdk15to18` | NTLM 需要 MD4；选 15to18 变体是因为它不依赖 `java.lang.invoke`，且两个 SMB 库传递的 `jdk18on` 都已排除 |
@@ -147,21 +179,30 @@ adb install -r app\build\outputs\apk\debug\app-debug.apk
 | 列表 | Compose `LazyVerticalGrid` | `tv-foundation:1.0.0` **不提供** lazy 网格组件（只有 list 系列），故用标准库网格 + TV 卡片 |
 | 构建 | AGP 8.7.3 / Kotlin 2.0.21 / compileSdk 35 | `tv-foundation:1.0.0` 要求 compileSdk ≥ 35 且 AGP ≥ 8.6.0 |
 | 依赖注入 | 手写 `AppServices` 容器 | 规模不需要 Hilt，省掉注解处理器 |
-| 存储 | DataStore Preferences | 断点、字幕来源、样式、网络位置；无需 Room |
+| 存储 | DataStore Preferences | 字幕来源、样式、网络位置；不保存播放进度，无需 Room |
 | 最低版本 | `minSdk 23` | 受 `tv-foundation:1.0.0` 限制 |
 
 ## 已知限制
 
 - **少数服务器会拒绝枚举共享**（组策略或 NAS 设置里关掉了）。这时应用会退化为逐个尝试
   23 个常见共享名；两者都没命中也**不代表服务器没有共享**，请到设备后台查看实际名称后手工填写。
-- MP4 的 `tx3g` 二进制字幕轨能被列出，但不解析出文本
-- ASS 特效不做还原（见上文取舍）
-- 字幕颜色目前不可调（字号 / 位置 / 描边 / 偏移可调）
-- **DLNA 片源暂时读不到内嵌字幕轨**：那需要对 http 资源实现基于 Range 的随机读，
-  本版本没做。SMB 与本地片源不受影响；任何片源都可以挂外挂字幕。
-- **Dolby Vision 能否播放取决于设备的解码能力**：ExoPlayer 走系统 `MediaCodec`，
+- **拿不到 Dolby / DTS 直通（Atmos 等），多声道被下混成立体声**：libVLC 的 Android 音频输出里
+  只有 `android_audiotrack` 支持 IEC61937 直通，而它在这台 TCL/MTK 设备上初始化失败
+  （`too low audio sample frequency (0)` → `module not functional`，症状是**完全无声**）；
+  能出声的 `opensles_android` 只出 PCM。作为对照：**当贝播放器在同一台电视上能正常输出 Atmos**，
+  说明设备具备直通能力，差距在 libVLC 这一侧（它自研内核、自己控 AudioTrack 直通）。
+  后续可试：升级 libVLC 到 3.7.6，或改走 libmpv（Android 音频输出是原生 AudioTrack，支持 `--audio-spdif`）。
+- **主字幕的字号 / 位置 / 描边不可调**：它由 libass 按片源的特效字幕渲染，只有**时间偏移**能改；
+  次字幕不受此限。
+- **图片字幕（PGS / DVD SPU / 蓝光）只能挂在主字幕位**：由 libVLC 渲染；次字幕是自绘的文本层，
+  选到图片轨时会提示不支持。
+- **DLNA 片源的内嵌字幕只有主字幕读得到**：主字幕走 libVLC 自己解封装，所以 DLNA 也能用；
+  次字幕需要对 http 资源实现基于 Range 的随机读，本版本没做。任何片源都可以给次字幕挂外挂文件。
+- **两路字幕的位置靠手调**：主字幕由 libass 定位、拿不到它的实际高度，所以次字幕只能靠「底部距离」
+  这个固定余量（默认 112dp）错开；片源字幕特别高时到字幕设置里调大。
+- **播放 Dolby Vision 片源取决于设备解码能力**：走系统 `MediaCodec`，
   DV 需要厂商提供对应 profile 的解码器；HDR10 / HLG 一般没问题。
-  遇到 DV 片源黑屏或偏色，可先在电视上关掉 DV 输出再验证
+  遇到 DV 片源黑屏或偏色，可先在电视上关掉 DV 输出再验证。
 - 网络位置用明文保存密码（可在应用私有目录找到）；介意的话可以改用只读的访客账号
 
 [smbj]: https://github.com/hierynomus/smbj
