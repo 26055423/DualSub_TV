@@ -13,6 +13,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.dualsub.tv.core.AppServices
+import com.dualsub.tv.ai.AiRealtimeSubtitleSession
 import com.dualsub.tv.ai.AiSubtitleState
 import com.dualsub.tv.media.EmbeddedSubtitleReader
 import com.dualsub.tv.media.VideoItem
@@ -193,6 +194,7 @@ class PlayerViewModel(
     private val _aiSubtitleState = MutableStateFlow<AiSubtitleState>(AiSubtitleState.Idle)
     val aiSubtitleState: StateFlow<AiSubtitleState> = _aiSubtitleState.asStateFlow()
     private var aiSubtitleJob: Job? = null
+    private var liveSession: AiRealtimeSubtitleSession? = null
 
     private val _embeddedTracks = MutableStateFlow<List<EmbeddedSubtitleReader.TrackInfo>>(emptyList())
     val embeddedTracks: StateFlow<List<EmbeddedSubtitleReader.TrackInfo>> = _embeddedTracks.asStateFlow()
@@ -348,6 +350,60 @@ class PlayerViewModel(
      * 必须显式调用 —— [com.dualsub.tv.ui.AppRoot] 不再把本 VM 放进 Activity 级的
      * ViewModelStore，`onCleared()` 不保证及时触发，播放器会继续在后台读网络、继续出声。
      */
+    fun startLiveAiSubtitle() {
+        if (released) return
+        if (_aiSubtitleState.value is AiSubtitleState.Running) {
+            _aiSubtitleState.value = AiSubtitleState.LiveFailed("批处理进行中，请等待完成", canFallback = false)
+            return
+        }
+        stopLiveAiSubtitle()
+        viewModelScope.launch {
+            val config = settings.aiConfig.first()
+            if (config.apiKey.isBlank()) {
+                _aiSubtitleState.value = AiSubtitleState.LiveFailed("未配置 API Key，请先在「网络 → AI 字幕设置」填写", canFallback = false)
+                return@launch
+            }
+            updateTrack(forPrimary = false) {
+                it.copy(
+                    cues = emptyList(),
+                    isLoading = true,
+                    source = com.dualsub.tv.player.SubtitleSource.ExternalFile("ai://live", "AI 实时字幕")
+                )
+            }
+            liveSession = AiRealtimeSubtitleSession(
+                context = appContext,
+                generator = services.aiSubtitleGenerator,
+                mediaSources = services.mediaSources,
+                videoUri = video.uri,
+                config = config,
+                durationMs = _durationMs.value,
+                onCues = { cues -> pushLiveAiCues(cues) },
+                onClear = { clearLiveCues() },
+                onState = { state -> _aiSubtitleState.value = state }
+            ).also { it.start(_positionMs.value) }
+        }
+    }
+
+    fun stopLiveAiSubtitle() {
+        liveSession?.stop()
+        liveSession = null
+        if (_aiSubtitleState.value is AiSubtitleState.Live) {
+            _aiSubtitleState.value = AiSubtitleState.Idle
+        }
+    }
+
+    private fun pushLiveAiCues(newCues: List<SubtitleCue>) {
+        if (newCues.isEmpty()) return
+        updateTrack(forPrimary = false) { track ->
+            val merged = (track.cues + newCues).sortedBy { it.startMs }
+            track.copy(cues = merged, isLoading = false)
+        }
+    }
+
+    private fun clearLiveCues() {
+        updateTrack(forPrimary = false) { it.copy(cues = emptyList()) }
+    }
+
     fun generateAiSubtitle() {
         if (released) return
         if (_aiSubtitleState.value is AiSubtitleState.Running) return
@@ -374,6 +430,7 @@ class PlayerViewModel(
         if (released) return
         released = true
         abandonAudioFocus()
+        stopLiveAiSubtitle()
         tickerJob?.cancel()
         tickerJob = null
         errorCheckJob?.cancel()
@@ -984,6 +1041,7 @@ class PlayerViewModel(
                 _positionMs.value = position
                 if (seekJob?.isActive != true) refreshEmbeddedWindow(position)
                 _secondaryCue.value = _secondary.value.cueAt(position)
+                liveSession?.updatePosition(position)
                 delay(TICK_INTERVAL_MS)
             }
         }

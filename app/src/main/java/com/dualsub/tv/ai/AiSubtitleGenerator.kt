@@ -38,7 +38,7 @@ class AiSubtitleGenerator(
         val endMs: Long
     )
 
-    private val httpClient = OkHttpClient.Builder()
+    internal val httpClient = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(120, TimeUnit.SECONDS)
         .writeTimeout(30, TimeUnit.SECONDS)
@@ -130,7 +130,7 @@ class AiSubtitleGenerator(
         }
     }
 
-    private fun writeAudioSegment(
+    internal fun writeAudioSegment(
         extractor: MediaExtractorCompat,
         outFile: File,
         startMs: Long,
@@ -176,7 +176,7 @@ class AiSubtitleGenerator(
         }.map { it.await() }
     }
 
-    private fun callQwenOmniFlash(seg: Segment, config: AiSubtitleConfig): String {
+    internal fun callQwenOmniFlash(seg: Segment, config: AiSubtitleConfig): String {
         val base64Audio = Base64.encodeToString(seg.file.readBytes(), Base64.NO_WRAP)
         val promptText = buildString {
             append("请转录并翻译为${config.targetLang}，以标准 SRT 格式输出，只输出 SRT 内容，不要加任何解释或标记。")
@@ -234,7 +234,7 @@ class AiSubtitleGenerator(
         return sb.toString()
     }
 
-    private fun parseSrtCues(srt: String, offsetMs: Long): List<Triple<Long, Long, String>> {
+    internal fun parseSrtCues(srt: String, offsetMs: Long): List<Triple<Long, Long, String>> {
         val result = mutableListOf<Triple<Long, Long, String>>()
         val blocks = srt.trim().split(Regex("\\n\\s*\\n"))
         for (block in blocks) {
@@ -253,7 +253,7 @@ class AiSubtitleGenerator(
         return result
     }
 
-    private fun parseSrtTimeMs(time: String): Long {
+    internal fun parseSrtTimeMs(time: String): Long {
         // HH:MM:SS,mmm
         val parts = time.trim().split(":", ",", ".")
         if (parts.size < 4) return 0L

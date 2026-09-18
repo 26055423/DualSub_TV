@@ -808,8 +808,26 @@ private fun buildMenuGroups(
                 is com.dualsub.tv.ai.AiSubtitleState.Running -> "AI 生成中… ${s.current}/${s.total}"
                 is com.dualsub.tv.ai.AiSubtitleState.Done -> "AI 已完成，点击重新生成"
                 is com.dualsub.tv.ai.AiSubtitleState.Failed -> "AI 失败：${s.reason.take(30)}"
+                is com.dualsub.tv.ai.AiSubtitleState.Live -> "AI 自动生成字幕（实时模式进行中）"
+                is com.dualsub.tv.ai.AiSubtitleState.LiveFailed -> "AI 自动生成字幕"
             }
             add(MenuEntry.Action(label = aiLabel, onClick = { viewModel.generateAiSubtitle() }))
+
+            val isLive = aiSubtitleState is com.dualsub.tv.ai.AiSubtitleState.Live
+            val liveLabel = when (val s = aiSubtitleState) {
+                is com.dualsub.tv.ai.AiSubtitleState.Live ->
+                    "■ 停止实时 AI 字幕（已缓冲 ${s.bufferedMs / 1000}s）"
+                is com.dualsub.tv.ai.AiSubtitleState.LiveFailed ->
+                    "实时模式：${s.reason.take(28)}…"
+                else -> "AI 实时字幕（边看边生成）"
+            }
+            add(MenuEntry.Action(
+                label = liveLabel,
+                onClick = {
+                    if (isLive) viewModel.stopLiveAiSubtitle()
+                    else viewModel.startLiveAiSubtitle()
+                }
+            ))
         }
 
         add(MenuEntry.Header("显示样式"))
