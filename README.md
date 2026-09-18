@@ -191,7 +191,9 @@ adb install -r app\build\outputs\apk\debug\app-debug.apk
   （`too low audio sample frequency (0)` → `module not functional`，症状是**完全无声**）；
   能出声的 `opensles_android` 只出 PCM。作为对照：**当贝播放器在同一台电视上能正常输出 Atmos**，
   说明设备具备直通能力，差距在 libVLC 这一侧（它自研内核、自己控 AudioTrack 直通）。
-  后续可试：升级 libVLC 到 3.7.6，或改走 libmpv（Android 音频输出是原生 AudioTrack，支持 `--audio-spdif`）。
+  后续可试：改走 libmpv（Android 音频输出是原生 AudioTrack，支持 `--audio-spdif`）。
+  **注意「升级 libVLC」这条路走不通** —— `libvlc-all:3.7.6` 要求 `compileSdk >= 36`，
+  而本项目钉在 35（受 AGP 8.7.3 与 `tv-foundation:1.0.0` 约束），**3.6.5 已能用的最高 3.x**。
 - **主字幕的字号 / 位置 / 描边不可调**：它由 libass 按片源的特效字幕渲染，只有**时间偏移**能改；
   次字幕不受此限。
 - **图片字幕（PGS / DVD SPU / 蓝光）只能挂在主字幕位**：由 libVLC 渲染；次字幕是自绘的文本层，
