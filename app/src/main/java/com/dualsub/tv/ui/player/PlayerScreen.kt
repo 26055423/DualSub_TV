@@ -545,7 +545,6 @@ fun PlayerScreen(
                 durationMs = durationMs,
                 volume = stats.volume,
                 rate = stats.rate,
-                trackSummary = null
             )
         }
 

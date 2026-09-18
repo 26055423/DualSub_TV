@@ -76,7 +76,7 @@ object SmbPaths {
 
     /**
      * 百分号编码。只放行 URL 安全字符，其余（空格、中文、`#`、`?` 等）一律编码，
-     * 避免 ExoPlayer 解析 URI 时把 `#`、`?` 当成 fragment/query。
+     * 避免 URI 解析时把 `#`、`?` 当成 fragment/query。
      */
     internal fun encodeSegment(segment: String): String = buildString {
         for (byte in segment.toByteArray(Charsets.UTF_8)) {
@@ -98,7 +98,7 @@ object SmbPaths {
         var i = 0
         while (i < segment.length) {
             val c = segment[i]
-            if (c == '%' && i + 2 < segment.length + 1 && i + 2 <= segment.length) {
+            if (c == '%' && i + 2 <= segment.length) {
                 val hex = segment.substring(i + 1, minOf(i + 3, segment.length))
                 val value = hex.toIntOrNull(16)
                 if (value != null) {

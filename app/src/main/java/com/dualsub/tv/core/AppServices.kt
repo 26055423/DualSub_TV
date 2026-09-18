@@ -1,10 +1,8 @@
 package com.dualsub.tv.core
 
 import android.content.Context
-import androidx.media3.datasource.DataSource
 import com.dualsub.tv.data.SettingsStore
 import com.dualsub.tv.media.LocalMediaDataSource
-import com.dualsub.tv.network.DualSubDataSourceFactory
 import com.dualsub.tv.network.MediaSourceProvider
 import com.dualsub.tv.network.RemoteBrowserFactory
 import com.dualsub.tv.network.dlna.DlnaDiscovery
@@ -43,9 +41,6 @@ class AppServices(context: Context) {
 
     /** 阿里云盘登录状态管理（Token 持久化由 NetworkScreen 写入 SettingsStore）。 */
     val aliAuth = AliAuthManager()
-
-    val dataSourceFactory: DataSource.Factory =
-        DualSubDataSourceFactory(appContext, smbPool, smbRegistry, quarkAuth, baiduAuth, aliAuth)
 
     val browserFactory = RemoteBrowserFactory(smbPool, quarkAuth, baiduAuth, aliAuth)
 

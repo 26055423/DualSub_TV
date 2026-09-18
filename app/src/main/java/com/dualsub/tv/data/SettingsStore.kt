@@ -13,8 +13,11 @@ import com.dualsub.tv.network.RemoteLocation
 import com.dualsub.tv.network.RemoteType
 import com.dualsub.tv.player.SubtitleSource
 import com.dualsub.tv.player.SubtitleStyle
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
 
 private val Context.settingsDataStore: DataStore<Preferences> by preferencesDataStore(name = "dualsub_settings")
 
@@ -35,19 +38,21 @@ private const val KEY_REMOTE_LOCATIONS = "remote_locations"
  */
 class SettingsStore(private val context: Context) {
 
+    init {
+        // 清理遗留的断点续播 key（旧版落盘，新版不再使用）
+        CoroutineScope(Dispatchers.IO).launch {
+            context.settingsDataStore.edit { prefs ->
+                prefs.asMap().keys.filter { it.name.startsWith("position$SEPARATOR") }
+                    .forEach { prefs.remove(it) }
+            }
+        }
+    }
+
     val primaryStyle: Flow<SubtitleStyle> = context.settingsDataStore.data
         .map { it.readStyle(PREFIX_PRIMARY, SubtitleStyle.PRIMARY) }
 
     val secondaryStyle: Flow<SubtitleStyle> = context.settingsDataStore.data
         .map { it.readStyle(PREFIX_SECONDARY, SubtitleStyle.SECONDARY) }
-
-    /** Migration: discard legacy resume records. New playback sessions always start at zero. */
-    suspend fun clearPlaybackPositions() {
-        context.settingsDataStore.edit { prefs ->
-            prefs.asMap().keys.filter { it.name.startsWith("position$SEPARATOR") }
-                .forEach { prefs.remove(it) }
-        }
-    }
 
     fun primarySource(videoKey: String): Flow<SubtitleSource> = context.settingsDataStore.data
         .map { decodeSource(it[stringPreferencesKey("primary_source$SEPARATOR$videoKey")]) }

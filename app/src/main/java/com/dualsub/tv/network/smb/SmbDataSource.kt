@@ -11,7 +11,7 @@ import kotlinx.coroutines.runBlocking
 import java.io.IOException
 
 /**
- * 让 ExoPlayer 直接播放 `smb://` 地址的 [androidx.media3.datasource.DataSource]。
+ * 供 Media3 读取 `smb://` 地址的 [androidx.media3.datasource.DataSource]。
  *
  * 相比「起一个本地 HTTP 代理再转发」的做法，这里省掉了一个组件、没有端口冲突，
  * 而且天然支持随机读，因此拖动进度条与断点续播都能正常工作。

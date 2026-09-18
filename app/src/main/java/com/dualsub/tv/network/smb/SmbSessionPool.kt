@@ -6,7 +6,7 @@ import java.util.concurrent.ConcurrentHashMap
 /**
  * 按主机复用 SMB 连接。
  *
- * ExoPlayer 在每次 seek 后会重新 `open` DataSource，如果每次都重新握手会明显卡顿，
+ * Media3 DataSource 在每次 seek 后会重新 `open`，如果每次都重新握手会明显卡顿，
  * 因此把 [SmbSession] 缓存起来按主机复用。浏览界面与播放器共用同一份连接。
  */
 class SmbSessionPool {

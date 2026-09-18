@@ -29,7 +29,7 @@ data class DlnaDevice(
  * controlURL、用 SOAP `Browse` 列目录。**不引入 Cling/jUPnP** ——
  * Cling 已停止维护，jUPnP 又会带进 OSGi/javax 一堆依赖，而这里需要的功能很少。
  *
- * 拉流本身用不到它：DLNA 的资源地址就是普通 `http://`，ExoPlayer 原生支持。
+ * 拉流本身用不到它：DLNA 的资源地址就是普通 `http://`，libVLC 原生支持。
  */
 class DlnaDiscovery(private val context: Context) {
 

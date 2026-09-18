@@ -23,7 +23,7 @@ class RemoteBrowserFactory(
 ) {
 
     fun create(location: RemoteLocation): RemoteBrowser = when (location.type) {
-        RemoteType.SMB -> SmbBrowser(location, smbPool.session(location))
+        RemoteType.SMB -> SmbBrowser(smbPool.session(location))
         RemoteType.DLNA -> DlnaBrowser(
             DlnaDevice(
                 friendlyName = location.displayName,

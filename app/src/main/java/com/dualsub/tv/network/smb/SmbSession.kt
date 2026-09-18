@@ -24,7 +24,7 @@ import java.util.concurrent.TimeUnit
  * 一个 SMB 服务器的连接会话。
  *
  * smbj 的 API 是阻塞式的，所以所有对外方法都跑在 [Dispatchers.IO] 上。
- * 连接本身是线程安全的，可以被 ExoPlayer 的 DataSource 与浏览界面同时使用。
+ * 连接本身是线程安全的，可以被 Media3 DataSource 与浏览界面同时使用。
  *
  * `RemoteLocation.share` 为空时只建立会话、不打开共享 —— 这条路径专门用于
  * 「先登录，再找出这台服务器上有哪些共享」的配置流程。

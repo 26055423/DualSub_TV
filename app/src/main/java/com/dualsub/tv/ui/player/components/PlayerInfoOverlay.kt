@@ -19,6 +19,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.Text
+import com.dualsub.tv.ui.format.formatTime
 
 /**
  * 「按上/下显示的播放信息层」。
@@ -42,8 +43,6 @@ fun PlayerInfoOverlay(
     durationMs: Long,
     volume: Int,
     rate: Float,
-    /** 容器/编码那一行诊断文本，可能为 null。 */
-    trackSummary: String?,
     modifier: Modifier = Modifier
 ) {
     Column(
@@ -71,7 +70,6 @@ fun PlayerInfoOverlay(
         InfoRow("次字幕", secondaryLabel)
         InfoRow("音量", "$volume%")
         InfoRow("倍速", "%.2fx".format(rate))
-        trackSummary?.takeIf { it.isNotBlank() }?.let { InfoRow("轨道", it) }
     }
 }
 
@@ -93,19 +91,5 @@ private fun InfoRow(label: String, value: String) {
             color = Color(0xFFE0E0E0),
             modifier = Modifier.weight(1f)
         )
-    }
-}
-
-/** 把毫秒格式化成 `H:MM:SS` 或 `M:SS`。 */
-internal fun formatTime(ms: Long): String {
-    if (ms <= 0L) return "0:00"
-    val totalSeconds = ms / 1000
-    val hours = totalSeconds / 3600
-    val minutes = (totalSeconds % 3600) / 60
-    val seconds = totalSeconds % 60
-    return if (hours > 0) {
-        "%d:%02d:%02d".format(hours, minutes, seconds)
-    } else {
-        "%d:%02d".format(minutes, seconds)
     }
 }

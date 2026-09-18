@@ -108,9 +108,6 @@ class PlayerViewModel(
     private val _secondary = MutableStateFlow(SubtitleTrack(style = SubtitleStyle.SECONDARY))
     val secondary: StateFlow<SubtitleTrack> = _secondary.asStateFlow()
 
-    private val _primaryCue = MutableStateFlow<SubtitleCue?>(null)
-    val primaryCue: StateFlow<SubtitleCue?> = _primaryCue.asStateFlow()
-
     private val _secondaryCue = MutableStateFlow<SubtitleCue?>(null)
     val secondaryCue: StateFlow<SubtitleCue?> = _secondaryCue.asStateFlow()
 
@@ -362,7 +359,6 @@ class PlayerViewModel(
 
     private fun restoreAndOpen() {
         viewModelScope.launch {
-            settings.clearPlaybackPositions()
             val primaryStyle = settings.primaryStyle.first()
             val secondaryStyle = settings.secondaryStyle.first()
             val primarySource = settings.primarySource(video.storageKey).first()
@@ -378,7 +374,7 @@ class PlayerViewModel(
             controller.open(
                 uri = video.uri,
                 startPositionMs = 0L,
-                options = playbackOptions()
+                options = emptyList()
             )
 
             if (!primarySelectionMade) applySource(primarySource, forPrimary = true)
@@ -388,14 +384,6 @@ class PlayerViewModel(
             trySelectDefaultSubtitle()
         }
     }
-
-    /**
-     * 传给 libVLC 的媒体级选项。
-     *
-     * 实测 SMB 片源能正常播放，说明 libVLC 从 URI 就能拿到所需信息，不必额外注入凭据。
-     * 若将来遇到需要显式账号密码的共享，再在这里补 `:smb-user=` / `:smb-pwd=`。
-     */
-    private fun playbackOptions(): List<String> = emptyList()
 
     /** 刷新 libVLC 只读快照。走 JNI，所以只在状态变化时调用，绝不在组合期调用。 */
     private fun refreshStats() {
@@ -883,8 +871,6 @@ class PlayerViewModel(
     private fun startTicker() {
         tickerJob?.cancel()
         tickerJob = viewModelScope.launch {
-            // 临时诊断用的「上一条已打过日志的字幕」
-            var lastLoggedCue: SubtitleCue? = null
             while (isActive) {
                 if (released) break
                 val actualPosition = controller.positionMs()
@@ -895,24 +881,7 @@ class PlayerViewModel(
                 val position = pendingSeek ?: actualPosition
                 _positionMs.value = position
                 if (seekJob?.isActive != true) refreshEmbeddedWindow(position)
-                val primaryCue = _primary.value.cueAt(position)
                 _secondaryCue.value = _secondary.value.cueAt(position)
-                _primaryCue.value = primaryCue
-
-                // 临时诊断：字幕切换时打一行，确认「播放位置」与「字幕时间轴」是否对齐。
-                // 只在变化时打，不会刷屏。若这里一直在打「无」而 cues 不为 0，
-                // 就说明两套时间的基准不一致；若 cues 就是 0，说明读取那步没成。
-                if (primaryCue != lastLoggedCue) {
-                    lastLoggedCue = primaryCue
-                    Log.i(
-                        TAG,
-                        "字幕@${position}ms 主=" + (
-                            primaryCue?.let { "[${it.startMs}-${it.endMs}] ${it.text.take(40)}" }
-                                ?: "无"
-                            ) + "（本路共 ${_primary.value.cues.size} 条，来源 ${_primary.value.source::class.simpleName}）"
-                    )
-                }
-
                 delay(TICK_INTERVAL_MS)
             }
         }

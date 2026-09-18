@@ -10,13 +10,13 @@ class AliBrowser(private val auth: AliAuthManager) : RemoteBrowser {
     override val rootPath: String = "root"
 
     override suspend fun list(path: String): List<RemoteEntry> = withContext(Dispatchers.IO) {
-        val token = auth.accessToken ?: throw IllegalStateException("未登录阿里云盘")
+        check(auth.accessToken != null) { "未登录阿里云盘" }
         val driveId = auth.driveId ?: throw IllegalStateException("未获取到 drive_id")
 
         val fileList = try {
             auth.apiClient().listFiles(driveId, path)
         } catch (e: AliTokenExpiredException) {
-            val newToken = auth.tryRefreshToken() ?: throw IllegalStateException("授权已过期，请重新登录")
+            auth.tryRefreshToken() ?: throw IllegalStateException("授权已过期，请重新登录")
             auth.apiClient().listFiles(driveId, path)
         }
 
