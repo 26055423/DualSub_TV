@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -21,6 +22,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -37,6 +39,7 @@ import com.dualsub.tv.ai.AiSubtitleConfigServer
 import com.dualsub.tv.data.SettingsStore
 import com.dualsub.tv.ui.util.generateQrBitmap
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import java.net.Inet4Address
 import java.net.NetworkInterface
 
@@ -63,6 +66,7 @@ fun AiSettingsScreen(
 
     val lanIp = remember { getLanIpAddress() }
     val serverUrl = if (lanIp != null) "http://$lanIp:${AiSubtitleConfigServer.PORT}" else null
+    val scope = rememberCoroutineScope()
 
     val qrBitmap: Bitmap? = remember(serverUrl) {
         serverUrl?.let { runCatching { generateQrBitmap(it, 400) }.getOrNull() }
@@ -155,6 +159,75 @@ fun AiSettingsScreen(
                 fontSize = 12.sp,
                 color = Color(0xFF546E7A)
             )
+
+            // ---- 实时字幕参数
+            Text(
+                text = "实时字幕参数",
+                fontSize = 15.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = Color(0xFF90A4AE),
+                modifier = androidx.compose.ui.Modifier.padding(top = 8.dp)
+            )
+            val liveWindowOptions = listOf(10, 20, 40, 60)
+            val liveLeadOptions   = listOf(20, 40, 60)
+            StepperRow(
+                label = "窗口大小",
+                value = "${currentConfig.liveWindowSec}s",
+                detail = "每次提取并翻译的音频长度",
+                onDecrease = {
+                    val idx = liveWindowOptions.indexOf(currentConfig.liveWindowSec)
+                    if (idx > 0) scope.launch {
+                        settings.saveAiConfig(currentConfig.copy(liveWindowSec = liveWindowOptions[idx - 1]))
+                    }
+                },
+                onIncrease = {
+                    val idx = liveWindowOptions.indexOf(currentConfig.liveWindowSec)
+                    if (idx < liveWindowOptions.lastIndex) scope.launch {
+                        settings.saveAiConfig(currentConfig.copy(liveWindowSec = liveWindowOptions[idx + 1]))
+                    }
+                }
+            )
+            StepperRow(
+                label = "超前缓冲",
+                value = "${currentConfig.liveLeadSec}s",
+                detail = "提前播放位置多少秒开始翻译",
+                onDecrease = {
+                    val idx = liveLeadOptions.indexOf(currentConfig.liveLeadSec)
+                    if (idx > 0) scope.launch {
+                        settings.saveAiConfig(currentConfig.copy(liveLeadSec = liveLeadOptions[idx - 1]))
+                    }
+                },
+                onIncrease = {
+                    val idx = liveLeadOptions.indexOf(currentConfig.liveLeadSec)
+                    if (idx < liveLeadOptions.lastIndex) scope.launch {
+                        settings.saveAiConfig(currentConfig.copy(liveLeadSec = liveLeadOptions[idx + 1]))
+                    }
+                }
+            )
+
+            // ---- 视频缓冲大小
+            val videoCachingMs by settings.videoCachingMs.collectAsState(initial = 1500)
+            val cachingOptions = listOf(500, 1000, 1500, 3000, 6000)
+            Text(
+                text = "视频播放缓冲",
+                fontSize = 15.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = Color(0xFF90A4AE),
+                modifier = androidx.compose.ui.Modifier.padding(top = 8.dp)
+            )
+            StepperRow(
+                label = "缓冲大小",
+                value = "${videoCachingMs}ms",
+                detail = "调大可减少卡顿，调小降低延迟；重新打开视频后生效",
+                onDecrease = {
+                    val idx = cachingOptions.indexOf(videoCachingMs)
+                    if (idx > 0) scope.launch { settings.setVideoCachingMs(cachingOptions[idx - 1]) }
+                },
+                onIncrease = {
+                    val idx = cachingOptions.indexOf(videoCachingMs)
+                    if (idx < cachingOptions.lastIndex) scope.launch { settings.setVideoCachingMs(cachingOptions[idx + 1]) }
+                }
+            )
         }
     }
 }
@@ -178,3 +251,25 @@ private fun getLanIpAddress(): String? = runCatching {
         ?.firstOrNull { !it.isLoopbackAddress && it is Inet4Address }
         ?.hostAddress
 }.getOrNull()
+
+@Composable
+private fun StepperRow(
+    label: String,
+    value: String,
+    detail: String,
+    onDecrease: () -> Unit,
+    onIncrease: () -> Unit
+) {
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
+    ) {
+        Text(text = label, fontSize = 14.sp, color = Color(0xFF90A4AE),
+            modifier = androidx.compose.ui.Modifier.width(72.dp))
+        Button(onClick = onDecrease) { Text("－") }
+        Text(text = value, fontSize = 14.sp, color = Color(0xFFE0E0E0),
+            modifier = androidx.compose.ui.Modifier.widthIn(min = 56.dp))
+        Button(onClick = onIncrease) { Text("＋") }
+        Text(text = detail, fontSize = 11.sp, color = Color(0xFF546E7A))
+    }
+}

@@ -73,7 +73,7 @@ data class SubtitleTrackDetail(
  * `setHWDecoderEnabled(true, false)` 让 VLC 优先尝试硬解，失败时它会自行回退软解 ——
  * 这正是 RMVB 这类只有软解才能播的格式能出画面的关键。
  */
-class VlcPlayerController(context: Context) {
+class VlcPlayerController(context: Context, cachingMs: Int = 1500) {
 
     private val appContext = context.applicationContext
 
@@ -81,7 +81,7 @@ class VlcPlayerController(context: Context) {
     // （反编译栈显示 LibVLC.java:76 → AbstractList.add → UnsupportedOperationException），
     // 所以不能直接传 listOf(...) 生成的不可变 List —— 那会在打开视频的瞬间崩掉整个 APP。
     // 这里复制一份 ArrayList 再传。
-    private val libVlc = LibVLC(appContext, ArrayList(LAUNCH_OPTIONS))
+    private val libVlc = LibVLC(appContext, ArrayList(buildLaunchOptions(cachingMs)))
 
     val mediaPlayer = MediaPlayer(libVlc)
 
@@ -679,6 +679,18 @@ class VlcPlayerController(context: Context) {
             //（升级 libVLC 版本 / 换播放内核），不是改这一个参数能解决的。
             "--aout=opensles_android"
         )
+
+        /** 用指定缓存值替换默认的 1500ms，其余参数保持不变。 */
+        fun buildLaunchOptions(cachingMs: Int): List<String> {
+            if (cachingMs == 1500) return LAUNCH_OPTIONS
+            return LAUNCH_OPTIONS.map { opt ->
+                when {
+                    opt.startsWith("--network-caching=") -> "--network-caching=$cachingMs"
+                    opt.startsWith("--file-caching=")    -> "--file-caching=$cachingMs"
+                    else -> opt
+                }
+            }
+        }
 
         /**
          * 按编码给音轨打分，分越高越「肯定能出声」。

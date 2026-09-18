@@ -31,11 +31,16 @@ private const val RECORD_SEPARATOR = "\u001E"
 private const val KEY_REMOTE_LOCATIONS = "remote_locations"
 
 // AI 字幕配置 key
-private val KEY_AI_BASE_URL    = stringPreferencesKey("ai_subtitle_base_url")
-private val KEY_AI_API_KEY     = stringPreferencesKey("ai_subtitle_api_key")
-private val KEY_AI_MODEL       = stringPreferencesKey("ai_subtitle_model")
-private val KEY_AI_TARGET_LANG = stringPreferencesKey("ai_subtitle_target_lang")
-private val KEY_AI_PROMPT      = stringPreferencesKey("ai_subtitle_prompt")
+private val KEY_AI_BASE_URL      = stringPreferencesKey("ai_subtitle_base_url")
+private val KEY_AI_API_KEY       = stringPreferencesKey("ai_subtitle_api_key")
+private val KEY_AI_MODEL         = stringPreferencesKey("ai_subtitle_model")
+private val KEY_AI_TARGET_LANG   = stringPreferencesKey("ai_subtitle_target_lang")
+private val KEY_AI_PROMPT        = stringPreferencesKey("ai_subtitle_prompt")
+private val KEY_AI_LIVE_WINDOW   = intPreferencesKey("ai_subtitle_live_window_sec")
+private val KEY_AI_LIVE_LEAD     = intPreferencesKey("ai_subtitle_live_lead_sec")
+
+// 视频播放缓冲（毫秒）
+private val KEY_VIDEO_CACHING_MS = intPreferencesKey("video_caching_ms")
 
 /**
  * 偏好持久化。
@@ -103,11 +108,13 @@ class SettingsStore(private val context: Context) {
 
     val aiConfig: Flow<AiSubtitleConfig> = context.settingsDataStore.data.map { prefs ->
         AiSubtitleConfig(
-            baseUrl    = prefs[KEY_AI_BASE_URL]    ?: "https://dashscope.aliyuncs.com/compatible-mode/v1",
-            apiKey     = prefs[KEY_AI_API_KEY]     ?: "",
-            model      = prefs[KEY_AI_MODEL]       ?: "qwen3.8-omni-flash",
-            targetLang = prefs[KEY_AI_TARGET_LANG] ?: "中文",
-            prompt     = prefs[KEY_AI_PROMPT]      ?: ""
+            baseUrl      = prefs[KEY_AI_BASE_URL]    ?: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            apiKey       = prefs[KEY_AI_API_KEY]     ?: "",
+            model        = prefs[KEY_AI_MODEL]       ?: "qwen3.8-omni-flash",
+            targetLang   = prefs[KEY_AI_TARGET_LANG] ?: "中文",
+            prompt       = prefs[KEY_AI_PROMPT]      ?: "",
+            liveWindowSec = prefs[KEY_AI_LIVE_WINDOW] ?: 20,
+            liveLeadSec   = prefs[KEY_AI_LIVE_LEAD]   ?: 40
         )
     }
 
@@ -118,7 +125,17 @@ class SettingsStore(private val context: Context) {
             prefs[KEY_AI_MODEL]       = config.model
             prefs[KEY_AI_TARGET_LANG] = config.targetLang
             prefs[KEY_AI_PROMPT]      = config.prompt
+            prefs[KEY_AI_LIVE_WINDOW] = config.liveWindowSec
+            prefs[KEY_AI_LIVE_LEAD]   = config.liveLeadSec
         }
+    }
+
+    /** 视频播放缓冲大小（毫秒），默认 1500ms。 */
+    val videoCachingMs: Flow<Int> = context.settingsDataStore.data
+        .map { it[KEY_VIDEO_CACHING_MS] ?: 1500 }
+
+    suspend fun setVideoCachingMs(ms: Int) {
+        context.settingsDataStore.edit { it[KEY_VIDEO_CACHING_MS] = ms }
     }
 
     private suspend fun writeStyle(prefix: String, style: SubtitleStyle) {

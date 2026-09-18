@@ -38,6 +38,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -106,7 +107,10 @@ class PlayerViewModel(
 ) : ViewModel() {
 
     private val settings = services.settings
-    private val controller = VlcPlayerController(appContext)
+    private val controller = VlcPlayerController(
+        appContext,
+        cachingMs = runBlocking { services.settings.videoCachingMs.first() }
+    )
     private val audioManager = appContext.getSystemService(Context.AUDIO_SERVICE) as AudioManager
 
     // AudioFocus：失去焦点时记录是否需要在恢复后继续播放

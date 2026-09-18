@@ -61,6 +61,8 @@ class AiRealtimeSubtitleSession(
     }
 
     private suspend fun runLoop(startPositionMs: Long) {
+        val windowMs = config.liveWindowSec * 1000L
+        val leadMs   = config.liveLeadSec   * 1000L
         var extractCursor = startPositionMs
         var consecutiveFailures = 0
         val recentCueTexts = ArrayDeque<String>()
@@ -86,13 +88,13 @@ class AiRealtimeSubtitleSession(
             }
 
             // 超前量已足够，等播放追上再继续提取
-            if (extractCursor - currentPlay >= LEAD_MS) {
+            if (extractCursor - currentPlay >= leadMs) {
                 delay(WAIT_INTERVAL_MS)
                 continue
             }
 
             val segStart = (extractCursor - OVERLAP_MS).coerceAtLeast(0L)
-            val segEnd = (extractCursor + WINDOW_DURATION_MS).coerceAtMost(durationMs)
+            val segEnd = (extractCursor + windowMs).coerceAtMost(durationMs)
             val tmpFile = File(context.cacheDir, "ai_live_$segStart.aac")
 
             onState(AiSubtitleState.Live(extractCursor, "正在提取 ${extractCursor / 1000}s 处音频…"))
@@ -117,7 +119,7 @@ class AiRealtimeSubtitleSession(
                         while (recentCueTexts.size > CONTEXT_CUE_COUNT) recentCueTexts.removeFirst()
                     }
                     consecutiveFailures = 0
-                    val buffered = extractCursor + WINDOW_DURATION_MS
+                    val buffered = extractCursor + windowMs
                     onState(AiSubtitleState.Live(buffered, "已缓冲到 ${buffered / 1000}s"))
                 }
             } catch (e: Exception) {
@@ -136,7 +138,7 @@ class AiRealtimeSubtitleSession(
                 runCatching { tmpFile.delete() }
             }
 
-            extractCursor += WINDOW_DURATION_MS
+            extractCursor += windowMs
         }
     }
 
@@ -164,9 +166,7 @@ class AiRealtimeSubtitleSession(
     }
 
     companion object {
-        private const val WINDOW_DURATION_MS = 20_000L
         private const val OVERLAP_MS = 3_000L
-        private const val LEAD_MS = 40_000L
         private const val MAX_FAILURES = 2
         private const val API_TIMEOUT_MS = 90_000L
         private const val SEEK_RESET_THRESHOLD_MS = 60_000L
