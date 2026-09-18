@@ -20,6 +20,7 @@ import com.dualsub.tv.ui.library.LibraryScreen
 import com.dualsub.tv.ui.network.NetworkScreen
 import com.dualsub.tv.ui.player.PlayerScreen
 import com.dualsub.tv.ui.player.PlayerViewModel
+import com.dualsub.tv.ui.settings.AiSettingsScreen
 
 /**
  * 极简导航：媒体库 ⇄ 网络位置 ⇄ 播放页。
@@ -37,6 +38,7 @@ fun AppRoot(externalVideoUri: Uri? = null) {
     val services = remember { AppServices(context) }
     var playing by remember { mutableStateOf<VideoItem?>(null) }
     var browsingNetwork by remember { mutableStateOf(false) }
+    var browsingAiSettings by remember { mutableStateOf(false) }
 
     LaunchedEffect(externalVideoUri) {
         if (externalVideoUri != null && playing == null) {
@@ -72,9 +74,15 @@ fun AppRoot(externalVideoUri: Uri? = null) {
             PlayerScreen(viewModel = playerViewModel, onBack = { playing = null })
         }
 
+        browsingAiSettings -> AiSettingsScreen(
+            settings = services.settings,
+            onExit = { browsingAiSettings = false }
+        )
+
         browsingNetwork -> NetworkScreen(
             services = services,
             onOpenVideo = { playing = it },
+            onOpenAiSettings = { browsingAiSettings = true },
             onExit = { browsingNetwork = false }
         )
 

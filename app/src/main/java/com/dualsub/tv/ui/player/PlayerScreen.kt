@@ -63,6 +63,7 @@ import com.dualsub.tv.core.InAppLog
 import com.dualsub.tv.player.VlcPlayerController
 import com.dualsub.tv.ui.format.formatOffset
 import com.dualsub.tv.ui.format.formatTime
+import com.dualsub.tv.ui.player.components.AiSubtitleProgressOverlay
 import com.dualsub.tv.ui.player.components.MenuEntry
 import com.dualsub.tv.ui.player.components.PlayerControls
 import com.dualsub.tv.ui.player.components.PlayerMenuGroup
@@ -132,6 +133,7 @@ fun PlayerScreen(
     val audioTracks by viewModel.audioTracks.collectAsState()
     // libVLC 的只读快照（音轨/分辨率/音量/倍速）—— 组合期只读它，不再直接调 JNI
     val stats by viewModel.stats.collectAsState()
+    val aiSubtitleState by viewModel.aiSubtitleState.collectAsState()
 
     var showControls by remember { mutableStateOf(true) }
     var pickForPrimary by remember { mutableStateOf(true) }
@@ -235,7 +237,8 @@ fun PlayerScreen(
         onAspectChange = { aspectIndex = it },
         subtitlePage = subtitlePage,
         onSubtitlePageChange = { subtitlePage = it },
-        onShowLog = { menuOpen = false; logOverlay = true }
+        onShowLog = { menuOpen = false; logOverlay = true },
+        aiSubtitleState = aiSubtitleState
     )
 
     val currentSelectable = menuGroups.getOrNull(menuGroup)?.entries?.selectableIndices() ?: emptyList()
@@ -530,6 +533,12 @@ fun PlayerScreen(
         // ---- 播放信息层（按上/下切换，任意键关闭）
         //
         // 与菜单互斥：菜单开着时不叠信息层，避免两层文字打在一起。
+        // ---- AI 字幕生成进度悬浮条（右上角，仅生成中时可见）
+        AiSubtitleProgressOverlay(
+            state = aiSubtitleState,
+            modifier = Modifier.align(Alignment.TopEnd)
+        )
+
         if (infoOverlay && !menuOpen && !logOverlay) {
             PlayerInfoOverlay(
                 title = viewModel.video.title,
@@ -744,7 +753,8 @@ private fun buildMenuGroups(
     onAspectChange: (Int) -> Unit,
     subtitlePage: Int,
     onSubtitlePageChange: (Int) -> Unit,
-    onShowLog: () -> Unit
+    onShowLog: () -> Unit,
+    aiSubtitleState: com.dualsub.tv.ai.AiSubtitleState = com.dualsub.tv.ai.AiSubtitleState.Idle
 ): List<PlayerMenuGroup> {
 
     val shortLabels = embeddedShortLabels(embeddedTracks)
@@ -790,6 +800,17 @@ private fun buildMenuGroups(
             ))
         }
         add(MenuEntry.Action(label = "选择外挂字幕文件…", onClick = { onPickFile(isPrimary) }))
+
+        // 次字幕位可以用 AI 生成
+        if (!isPrimary) {
+            val aiLabel = when (val s = aiSubtitleState) {
+                is com.dualsub.tv.ai.AiSubtitleState.Idle -> "AI 自动生成字幕"
+                is com.dualsub.tv.ai.AiSubtitleState.Running -> "AI 生成中… ${s.current}/${s.total}"
+                is com.dualsub.tv.ai.AiSubtitleState.Done -> "AI 已完成，点击重新生成"
+                is com.dualsub.tv.ai.AiSubtitleState.Failed -> "AI 失败：${s.reason.take(30)}"
+            }
+            add(MenuEntry.Action(label = aiLabel, onClick = { viewModel.generateAiSubtitle() }))
+        }
 
         add(MenuEntry.Header("显示样式"))
         if (isPrimary) {

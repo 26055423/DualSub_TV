@@ -13,6 +13,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.dualsub.tv.core.AppServices
+import com.dualsub.tv.ai.AiSubtitleState
 import com.dualsub.tv.media.EmbeddedSubtitleReader
 import com.dualsub.tv.media.VideoItem
 import com.dualsub.tv.player.SubtitleSource
@@ -189,6 +190,10 @@ class PlayerViewModel(
     private val _stats = MutableStateFlow(PlaybackStats())
     val stats: StateFlow<PlaybackStats> = _stats.asStateFlow()
 
+    private val _aiSubtitleState = MutableStateFlow<AiSubtitleState>(AiSubtitleState.Idle)
+    val aiSubtitleState: StateFlow<AiSubtitleState> = _aiSubtitleState.asStateFlow()
+    private var aiSubtitleJob: Job? = null
+
     private val _embeddedTracks = MutableStateFlow<List<EmbeddedSubtitleReader.TrackInfo>>(emptyList())
     val embeddedTracks: StateFlow<List<EmbeddedSubtitleReader.TrackInfo>> = _embeddedTracks.asStateFlow()
     private val _embeddedTrackStatus = MutableStateFlow("正在读取轨道…")
@@ -343,6 +348,28 @@ class PlayerViewModel(
      * 必须显式调用 —— [com.dualsub.tv.ui.AppRoot] 不再把本 VM 放进 Activity 级的
      * ViewModelStore，`onCleared()` 不保证及时触发，播放器会继续在后台读网络、继续出声。
      */
+    fun generateAiSubtitle() {
+        if (released) return
+        if (_aiSubtitleState.value is AiSubtitleState.Running) return
+        aiSubtitleJob?.cancel()
+        aiSubtitleJob = viewModelScope.launch(Dispatchers.IO) {
+            val config = settings.aiConfig.first()
+            if (config.apiKey.isBlank()) {
+                _aiSubtitleState.value = AiSubtitleState.Failed("未配置 API Key，请先在「网络 → AI 字幕设置」填写")
+                return@launch
+            }
+            val result = services.aiSubtitleGenerator.generate(video.uri, config) { cur, total, phase ->
+                _aiSubtitleState.value = AiSubtitleState.Running(cur, total, phase)
+            }
+            result.onSuccess { uri ->
+                _aiSubtitleState.value = AiSubtitleState.Done(uri.path ?: "")
+                selectExternalFile(uri, "AI 生成字幕", forPrimary = false)
+            }.onFailure { e ->
+                _aiSubtitleState.value = AiSubtitleState.Failed(e.message ?: "未知错误")
+            }
+        }
+    }
+
     fun release() {
         if (released) return
         released = true

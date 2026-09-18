@@ -1,6 +1,7 @@
 package com.dualsub.tv.core
 
 import android.content.Context
+import com.dualsub.tv.ai.AiSubtitleGenerator
 import com.dualsub.tv.data.SettingsStore
 import com.dualsub.tv.media.LocalMediaDataSource
 import com.dualsub.tv.network.MediaSourceProvider
@@ -72,4 +73,6 @@ class AppServices(context: Context) {
             else -> null
         }
     }
+
+    val aiSubtitleGenerator = AiSubtitleGenerator(appContext, mediaSources)
 }

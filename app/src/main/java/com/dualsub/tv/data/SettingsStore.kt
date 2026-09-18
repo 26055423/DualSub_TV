@@ -9,6 +9,7 @@ import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.dualsub.tv.ai.AiSubtitleConfig
 import com.dualsub.tv.network.RemoteLocation
 import com.dualsub.tv.network.RemoteType
 import com.dualsub.tv.player.SubtitleSource
@@ -28,6 +29,13 @@ private const val SEPARATOR = "\u001F"
 private const val RECORD_SEPARATOR = "\u001E"
 
 private const val KEY_REMOTE_LOCATIONS = "remote_locations"
+
+// AI 字幕配置 key
+private val KEY_AI_BASE_URL    = stringPreferencesKey("ai_subtitle_base_url")
+private val KEY_AI_API_KEY     = stringPreferencesKey("ai_subtitle_api_key")
+private val KEY_AI_MODEL       = stringPreferencesKey("ai_subtitle_model")
+private val KEY_AI_TARGET_LANG = stringPreferencesKey("ai_subtitle_target_lang")
+private val KEY_AI_PROMPT      = stringPreferencesKey("ai_subtitle_prompt")
 
 /**
  * 偏好持久化。
@@ -88,6 +96,28 @@ class SettingsStore(private val context: Context) {
         context.settingsDataStore.edit { prefs ->
             prefs[stringPreferencesKey(KEY_REMOTE_LOCATIONS)] =
                 locations.joinToString(RECORD_SEPARATOR) { encodeLocation(it) }
+        }
+    }
+
+    // ---------------------------------------------------------------- AI 字幕配置
+
+    val aiConfig: Flow<AiSubtitleConfig> = context.settingsDataStore.data.map { prefs ->
+        AiSubtitleConfig(
+            baseUrl    = prefs[KEY_AI_BASE_URL]    ?: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            apiKey     = prefs[KEY_AI_API_KEY]     ?: "",
+            model      = prefs[KEY_AI_MODEL]       ?: "qwen3.8-omni-flash",
+            targetLang = prefs[KEY_AI_TARGET_LANG] ?: "中文",
+            prompt     = prefs[KEY_AI_PROMPT]      ?: ""
+        )
+    }
+
+    suspend fun saveAiConfig(config: AiSubtitleConfig) {
+        context.settingsDataStore.edit { prefs ->
+            prefs[KEY_AI_BASE_URL]    = config.baseUrl
+            prefs[KEY_AI_API_KEY]     = config.apiKey
+            prefs[KEY_AI_MODEL]       = config.model
+            prefs[KEY_AI_TARGET_LANG] = config.targetLang
+            prefs[KEY_AI_PROMPT]      = config.prompt
         }
     }
 

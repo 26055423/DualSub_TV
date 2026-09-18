@@ -141,6 +141,9 @@ dependencies {
     implementation(libs.zxing.core)
     implementation(libs.sardine.android)
 
+    // AI 字幕配置：手机扫码填表，TV 内嵌轻量 HTTP server
+    implementation("org.nanohttpd:nanohttpd:2.3.1")
+
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
     androidTestImplementation(libs.androidx.junit)

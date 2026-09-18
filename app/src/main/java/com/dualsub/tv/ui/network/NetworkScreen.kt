@@ -74,6 +74,7 @@ private sealed interface FormMode {
 fun NetworkScreen(
     services: AppServices,
     onOpenVideo: (VideoItem) -> Unit,
+    onOpenAiSettings: () -> Unit,
     onExit: () -> Unit
 ) {
     val scope = rememberCoroutineScope()
@@ -337,6 +338,7 @@ fun NetworkScreen(
                 enabled = !busy
             ) { Text("扫描 DLNA 设备", fontSize = 14.sp) }
 
+            Button(onClick = onOpenAiSettings) { Text("AI 字幕设置", fontSize = 14.sp) }
             Button(onClick = onExit) { Text("返回", fontSize = 14.sp) }
         }
 
