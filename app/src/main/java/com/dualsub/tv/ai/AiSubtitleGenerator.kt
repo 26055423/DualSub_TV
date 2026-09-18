@@ -176,11 +176,19 @@ class AiSubtitleGenerator(
         }.map { it.await() }
     }
 
-    internal fun callQwenOmniFlash(seg: Segment, config: AiSubtitleConfig): String {
+    internal fun callQwenOmniFlash(
+        seg: Segment,
+        config: AiSubtitleConfig,
+        contextLines: List<String> = emptyList()
+    ): String {
         val base64Audio = Base64.encodeToString(seg.file.readBytes(), Base64.NO_WRAP)
         val promptText = buildString {
             append("请转录并翻译为${config.targetLang}，以标准 SRT 格式输出，只输出 SRT 内容，不要加任何解释或标记。")
             if (config.prompt.isNotBlank()) append("\n附加说明：${config.prompt}")
+            if (contextLines.isNotEmpty()) {
+                append("\n\n前文参考（保持人名、术语与以下译文一致，不必重新翻译这部分）：\n")
+                append(contextLines.joinToString("\n"))
+            }
         }
         val body = JSONObject().apply {
             put("model", config.model)

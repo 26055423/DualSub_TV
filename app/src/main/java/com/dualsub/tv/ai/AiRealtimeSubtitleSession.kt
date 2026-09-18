@@ -63,6 +63,7 @@ class AiRealtimeSubtitleSession(
     private suspend fun runLoop(startPositionMs: Long) {
         var extractCursor = startPositionMs
         var consecutiveFailures = 0
+        val recentCueTexts = ArrayDeque<String>()
 
         while (currentCoroutineContext().isActive) {
             currentCoroutineContext().ensureActive()
@@ -72,6 +73,7 @@ class AiRealtimeSubtitleSession(
             if (abs(currentPlay - lastPositionForSeekDetect) > SEEK_RESET_THRESHOLD_MS) {
                 extractCursor = currentPlay
                 consecutiveFailures = 0
+                recentCueTexts.clear()
                 onClear()
                 onState(AiSubtitleState.Live(currentPlay, "检测到跳转，从 ${currentPlay / 1000}s 重新缓冲…"))
             }
@@ -99,14 +101,21 @@ class AiRealtimeSubtitleSession(
                 withTimeout(API_TIMEOUT_MS) {
                     extractAudioWindow(segStart, segEnd, tmpFile)
                     val srt = generator.callQwenOmniFlash(
-                        AiSubtitleGenerator.Segment(tmpFile, segStart, segEnd), config
+                        AiSubtitleGenerator.Segment(tmpFile, segStart, segEnd),
+                        config,
+                        contextLines = recentCueTexts.toList()
                     )
                     val rawCues = generator.parseSrtCues(srt, segStart)
                     // 过滤重叠区（segStart < extractCursor）已推过的 cue，避免重复
                     val newCues = rawCues
                         .filter { (startMs, _, _) -> startMs >= extractCursor }
                         .map { (startMs, endMs, text) -> SubtitleCue(startMs, endMs, text) }
-                    if (newCues.isNotEmpty()) onCues(newCues)
+                    if (newCues.isNotEmpty()) {
+                        onCues(newCues)
+                        // 把新 cue 的译文压入队列，保留最近 CONTEXT_CUE_COUNT 条
+                        newCues.forEach { recentCueTexts.addLast(it.text) }
+                        while (recentCueTexts.size > CONTEXT_CUE_COUNT) recentCueTexts.removeFirst()
+                    }
                     consecutiveFailures = 0
                     val buffered = extractCursor + WINDOW_DURATION_MS
                     onState(AiSubtitleState.Live(buffered, "已缓冲到 ${buffered / 1000}s"))
@@ -162,5 +171,6 @@ class AiRealtimeSubtitleSession(
         private const val API_TIMEOUT_MS = 90_000L
         private const val SEEK_RESET_THRESHOLD_MS = 60_000L
         private const val WAIT_INTERVAL_MS = 500L
+        private const val CONTEXT_CUE_COUNT = 12
     }
 }
