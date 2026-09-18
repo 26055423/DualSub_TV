@@ -1065,23 +1065,34 @@ private fun normalizeLanguage(code: String?): String? {
         "fil"                                            -> "Filipino"
         "glg", "gl"                                      -> "Galego"
         "baq", "eus", "eu"                               -> "Euskara"
+        "bul", "bg"                                      -> "Български"
+        "est", "et"                                      -> "Eesti"
+        "lit", "lt"                                      -> "Lietuvių"
+        "lav", "lv"                                      -> "Latviešu"
+        "slv", "sl"                                      -> "Slovenščina"
+        "ice", "isl", "is"                               -> "Íslenska"
+        "mac", "mkd", "mk"                               -> "Македонски"
+        "srp", "sr"                                      -> "Српски"
+        "slo", "slk", "sk"                               -> "Slovenčina"
+        "nor", "no"                                      -> "Norsk"
+        "mon", "khk", "mn"                               -> "Монгол хэл"
         else                                             -> code
     }
 }
 
 // 若 title 是 language 规范名的细化（以规范名开头），则只保留 title 本身（含地区信息）；
 // 若 title 与 language 完全重复，则省略 title；否则原样保留。
+private val NOISE_TITLES = setOf("subtitlehandler", "subtitle", "texthandler", "text handler")
+
 private fun resolvedTitle(language: String?, title: String?): String? {
     if (title.isNullOrBlank()) return null
-    val normLang = normalizeLanguage(language) ?: return title
-    val titleTrimmed = title.trim()
+    val t = title.trim()
+    if (NOISE_TITLES.contains(t.lowercase()) || t.endsWith("Handler", ignoreCase = true)) return null
+    val normLang = normalizeLanguage(language) ?: return t
     return when {
-        // "Deutsch (Deutschland)" 以 "Deutsch" 开头 → 只保留 title，省略 lang 部分
-        titleTrimmed.startsWith(normLang, ignoreCase = true) -> titleTrimmed
-        // title 规范化后与 lang 相同（如 title="de" → "Deutsch"）→ 省略 title
-        normalizeLanguage(title) == normLang -> null
-        // title 有额外信息
-        else -> titleTrimmed
+        t.startsWith(normLang, ignoreCase = true) -> t
+        normalizeLanguage(t) == normLang -> null
+        else -> t
     }
 }
 
