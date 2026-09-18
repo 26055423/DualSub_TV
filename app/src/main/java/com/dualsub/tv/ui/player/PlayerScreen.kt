@@ -1038,21 +1038,50 @@ private fun normalizeLanguage(code: String?): String? {
         "por", "pt"                                      -> "Português"
         "ita", "it"                                      -> "Italiano"
         "ara", "ar"                                      -> "العربية"
-        "tha", "th"                                      -> "ภาษาไทย"
+        "tha", "th"                                      -> "ไทย"
         "vie", "vi"                                      -> "Tiếng Việt"
         "ind", "id"                                      -> "Bahasa Indonesia"
+        "cat", "ca"                                      -> "Català"
+        "cze", "ces", "cs"                               -> "Čeština"
+        "dan", "da"                                      -> "Dansk"
+        "dut", "nld", "nl"                               -> "Nederlands"
+        "fin", "fi"                                      -> "Suomi"
+        "gre", "ell", "el"                               -> "Ελληνικά"
+        "heb", "he"                                      -> "עברית"
+        "hin", "hi"                                      -> "हिन्दी"
+        "hrv", "hr"                                      -> "Hrvatski"
+        "hun", "hu"                                      -> "Magyar"
+        "kan", "kn"                                      -> "ಕನ್ನಡ"
+        "mal", "ml"                                      -> "മലയാളം"
+        "may", "msa", "ms"                               -> "Bahasa Melayu"
+        "nob", "nb"                                      -> "Norsk bokmål"
+        "pol", "pl"                                      -> "Polski"
+        "rum", "ron", "ro"                               -> "Română"
+        "swe", "sv"                                      -> "Svenska"
+        "tam", "ta"                                      -> "தமிழ்"
+        "tel", "te"                                      -> "తెలుగు"
+        "tur", "tr"                                      -> "Türkçe"
+        "ukr", "uk"                                      -> "Українська"
+        "fil"                                            -> "Filipino"
+        "glg", "gl"                                      -> "Galego"
+        "baq", "eus", "eu"                               -> "Euskara"
         else                                             -> code
     }
 }
 
+// 若 title 是 language 规范名的细化（以规范名开头），则只保留 title 本身（含地区信息）；
+// 若 title 与 language 完全重复，则省略 title；否则原样保留。
 private fun resolvedTitle(language: String?, title: String?): String? {
     if (title.isNullOrBlank()) return null
-    val normLang  = normalizeLanguage(language)
-    val normTitle = normalizeLanguage(title)
+    val normLang = normalizeLanguage(language) ?: return title
+    val titleTrimmed = title.trim()
     return when {
-        normTitle != null && normTitle == normLang -> null        // title 与 language 表达同一件事
-        normTitle != null && normLang == null      -> normTitle   // language 缺失，用 title 的规范化结果
-        else                                       -> title       // title 有独立信息，原样保留
+        // "Deutsch (Deutschland)" 以 "Deutsch" 开头 → 只保留 title，省略 lang 部分
+        titleTrimmed.startsWith(normLang, ignoreCase = true) -> titleTrimmed
+        // title 规范化后与 lang 相同（如 title="de" → "Deutsch"）→ 省略 title
+        normalizeLanguage(title) == normLang -> null
+        // title 有额外信息
+        else -> titleTrimmed
     }
 }
 
@@ -1063,10 +1092,15 @@ private fun embeddedShortLabels(
 
     data class Parts(val format: String?, val lang: String?, val title: String?)
     val parts = tracks.map { t ->
+        val lang  = normalizeLanguage(t.language)
+        val title = resolvedTitle(t.language, t.title)
+        // title 已包含 lang 信息（如 "Deutsch (Deutschland)"）→ 不再单独显示 lang
+        val effectiveLang = if (title != null && lang != null &&
+            title.startsWith(lang, ignoreCase = true)) null else lang
         Parts(
             format = t.format.displayName.takeIf { it.isNotBlank() },
-            lang   = normalizeLanguage(t.language),
-            title  = resolvedTitle(t.language, t.title)
+            lang   = effectiveLang,
+            title  = title
         )
     }
 
