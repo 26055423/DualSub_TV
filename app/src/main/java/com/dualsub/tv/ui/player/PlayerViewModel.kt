@@ -226,6 +226,45 @@ class PlayerViewModel(
         seekTo((pendingSeek ?: controller.positionMs()) + deltaMs)
     }
 
+    /**
+     * 长按快进/退时的逐帧预览 seek。
+     *
+     * 与 [seekTo] 的区别：
+     * - 无防抖延迟，直接送给解码器，让画面跟着手指实时走。
+     * - 首次调用时自动暂停播放（记录在 [_wasPlayingBeforePreview]），松键后调
+     *   [resumeFromPreview] 恢复。
+     * - 暂停状态下 libVLC 每次 setTime 都会解码并渲染目标位置的关键帧，这就是"看到画面"。
+     */
+    fun seekPreview(deltaMs: Long) {
+        if (released) return
+        if (!_wasPlayingBeforePreview && controller.isPlaying()) {
+            _wasPlayingBeforePreview = true
+            controller.pause()
+        }
+        val duration = controller.durationMs()
+        val target = ((pendingSeek ?: controller.positionMs()) + deltaMs)
+            .let { if (duration > 0) it.coerceIn(0, duration) else it.coerceAtLeast(0) }
+        pendingSeek = target
+        _positionMs.value = target
+        seekJob?.cancel()
+        seekJob = subtitleScope.launch {
+            controller.seekTo(target)
+        }
+    }
+
+    /** 长按结束，如果预览前在播放则恢复播放。 */
+    fun resumeFromPreview() {
+        if (released) return
+        if (_wasPlayingBeforePreview) {
+            _wasPlayingBeforePreview = false
+            controller.togglePlayPause() // pause → play
+            pendingSeek?.let { refreshEmbeddedWindow(it) }
+        }
+    }
+
+    // 长按预览期间是否暂停了播放（供 resumeFromPreview 判断）
+    private var _wasPlayingBeforePreview = false
+
     fun seekTo(positionMs: Long) {
         if (released) return
         val duration = controller.durationMs()

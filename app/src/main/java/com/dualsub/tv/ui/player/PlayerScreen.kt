@@ -247,6 +247,16 @@ fun PlayerScreen(
             .focusRequester(focusRequester)
             .focusable()
             .onPreviewKeyEvent { event ->
+                // 松开左/右键时结束长按预览，恢复播放
+                if (event.type == KeyEventType.KeyUp) {
+                    return@onPreviewKeyEvent when (event.key) {
+                        Key.DirectionLeft, Key.DirectionRight -> {
+                            viewModel.resumeFromPreview()
+                            true
+                        }
+                        else -> false
+                    }
+                }
                 if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
 
                 // 记下每一次按键的键名，供「影片详情」显示 —— 用来确认 ☰ 实际发的是什么
@@ -381,20 +391,32 @@ fun PlayerScreen(
                         true
                     }
 
-                    // 左/右：短按跳 10 秒；**长按照住不放则连续跳**，步长随按住时长递增。
-                    // 快进/退时同步显示控制条，让用户看到进度条位置。
+                    // 左/右：短按跳 10 秒；长按进入逐帧预览模式（暂停播放、每次解码目标帧）。
+                    // 松键时 KeyUp 分支会调 resumeFromPreview 恢复播放。
                     Key.DirectionLeft -> {
-                        val step = longPressSeekMs(event.nativeKeyEvent.repeatCount)
-                        viewModel.seekBy(-step)
-                        seekHint = "⏪ -${step / 1000}s"
+                        val repeat = event.nativeKeyEvent.repeatCount
+                        if (repeat == 0) {
+                            viewModel.seekBy(-SEEK_STEP_MS)
+                            seekHint = "⏪ -10s"
+                        } else {
+                            val step = longPressSeekMs(repeat)
+                            viewModel.seekPreview(-step)
+                            seekHint = "⏪ -${step / 1000}s"
+                        }
                         showControls = true
                         true
                     }
 
                     Key.DirectionRight -> {
-                        val step = longPressSeekMs(event.nativeKeyEvent.repeatCount)
-                        viewModel.seekBy(step)
-                        seekHint = "⏩ +${step / 1000}s"
+                        val repeat = event.nativeKeyEvent.repeatCount
+                        if (repeat == 0) {
+                            viewModel.seekBy(SEEK_STEP_MS)
+                            seekHint = "⏩ +10s"
+                        } else {
+                            val step = longPressSeekMs(repeat)
+                            viewModel.seekPreview(step)
+                            seekHint = "⏩ +${step / 1000}s"
+                        }
                         showControls = true
                         true
                     }
