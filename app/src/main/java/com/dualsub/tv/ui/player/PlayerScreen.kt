@@ -747,6 +747,8 @@ private fun buildMenuGroups(
     onShowLog: () -> Unit
 ): List<PlayerMenuGroup> {
 
+    val shortLabels = embeddedShortLabels(embeddedTracks)
+
     // ---- 1) 字幕设置：主字幕 / 次字幕两段，结构完全对称
     fun subtitleEntries(track: com.dualsub.tv.player.SubtitleTrack, isPrimary: Boolean): List<MenuEntry> = buildList {
         add(MenuEntry.Info("当前", buildString {
@@ -763,24 +765,25 @@ private fun buildMenuGroups(
             onSelect = { viewModel.selectNone(isPrimary) }
         ))
         embeddedTracks.forEach { embedded ->
+            val shortLabel = shortLabels[embedded] ?: embedded.label
             if (embedded.isBitmap) {
                 // 图片字幕（PGS / DVD SPU / 蓝光）**主字幕位是支持的** —— 它由 libVLC 自己
                 // 解封装并用 SPU/PGS 解码器渲染，这正是把主字幕交给它的收益之一。
                 // 次字幕走的是自绘文本层，没有位图渲染能力，所以只在那一页提示不支持。
                 if (isPrimary) {
                     add(MenuEntry.Choice(
-                        label = embedded.label,
+                        label = shortLabel,
                         detail = "图片字幕 · 播放器渲染",
                         selected = (track.source as? com.dualsub.tv.player.SubtitleSource.EmbeddedTrack)?.trackIndex == embedded.index,
                         onSelect = { viewModel.selectEmbedded(embedded, isPrimary) }
                     ))
                 } else {
-                    add(MenuEntry.Info(embedded.label, "图片字幕，次字幕无法渲染"))
+                    add(MenuEntry.Info(shortLabel, "图片字幕，次字幕无法渲染"))
                 }
                 return@forEach
             }
             add(MenuEntry.Choice(
-                label = embedded.label,
+                label = shortLabel,
                 detail = "内嵌",
                 selected = (track.source as? com.dualsub.tv.player.SubtitleSource.EmbeddedTrack)?.trackIndex == embedded.index,
                 onSelect = { viewModel.selectEmbedded(embedded, isPrimary) }
@@ -1015,5 +1018,74 @@ private fun SpinningProgressIndicator() {
             useCenter = false,
             style = Stroke(width = 4.dp.toPx(), cap = StrokeCap.Round)
         )
+    }
+}
+
+// -------- 字幕轨道名称简化工具 --------
+
+private fun normalizeLanguage(code: String?): String? {
+    if (code.isNullOrBlank() || code == "und") return null
+    return when (code.lowercase().trim()) {
+        "chi", "zho", "zh", "zh-hans", "zh-cn", "cmn"  -> "中文"
+        "zh-hant", "zh-tw", "zh-hk"                     -> "繁体中文"
+        "eng", "en"                                      -> "英文"
+        "jpn", "ja"                                      -> "日文"
+        "kor", "ko"                                      -> "韩文"
+        "fra", "fre", "fr"                               -> "法文"
+        "deu", "ger", "de"                               -> "德文"
+        "spa", "es"                                      -> "西班牙文"
+        "rus", "ru"                                      -> "俄文"
+        "por", "pt"                                      -> "葡萄牙文"
+        "ita", "it"                                      -> "意大利文"
+        "ara", "ar"                                      -> "阿拉伯文"
+        "tha", "th"                                      -> "泰文"
+        "vie", "vi"                                      -> "越南文"
+        "ind", "id"                                      -> "印尼文"
+        else                                             -> code
+    }
+}
+
+private fun resolvedTitle(language: String?, title: String?): String? {
+    if (title.isNullOrBlank()) return null
+    val normLang  = normalizeLanguage(language)
+    val normTitle = normalizeLanguage(title)
+    return when {
+        normTitle != null && normTitle == normLang -> null        // title 与 language 表达同一件事
+        normTitle != null && normLang == null      -> normTitle   // language 缺失，用 title 的规范化结果
+        else                                       -> title       // title 有独立信息，原样保留
+    }
+}
+
+private fun embeddedShortLabels(
+    tracks: List<com.dualsub.tv.media.EmbeddedSubtitleReader.TrackInfo>
+): Map<com.dualsub.tv.media.EmbeddedSubtitleReader.TrackInfo, String> {
+    if (tracks.isEmpty()) return emptyMap()
+
+    data class Parts(val format: String?, val lang: String?, val title: String?)
+    val parts = tracks.map { t ->
+        Parts(
+            format = t.format.displayName.takeIf { it.isNotBlank() },
+            lang   = normalizeLanguage(t.language),
+            title  = resolvedTitle(t.language, t.title)
+        )
+    }
+
+    val allSameFormat = parts.map { it.format }.toSet().size <= 1
+    val allSameLang   = parts.map { it.lang   }.toSet().size <= 1
+    val allSameTitle  = parts.map { it.title  }.toSet().size <= 1
+    val single        = tracks.size == 1
+
+    return tracks.zip(parts).associate { (track, p) ->
+        val kept = buildList {
+            if (!allSameFormat || single) p.format?.let { add(it) }
+            if (!allSameLang   || single) p.lang?.let { add(it) }
+            if (!allSameTitle  || single) p.title?.let { add(it) }
+        }
+        val base = if (kept.isEmpty()) {
+            listOfNotNull(p.lang, p.format, p.title).firstOrNull() ?: "字幕"
+        } else {
+            kept.joinToString(" · ")
+        }
+        track to "$base（内嵌 #${track.index}）"
     }
 }
