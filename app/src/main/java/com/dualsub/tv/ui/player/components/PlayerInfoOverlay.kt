@@ -48,7 +48,7 @@ fun PlayerInfoOverlay(
     Column(
         modifier = modifier
             .padding(start = 40.dp, top = 36.dp)
-            .width(560.dp)
+            .fillMaxWidth(0.55f)
             .background(Color(0xE0101418), RoundedCornerShape(12.dp))
             .padding(horizontal = 22.dp, vertical = 18.dp),
         verticalArrangement = Arrangement.spacedBy(9.dp)

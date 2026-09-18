@@ -1,8 +1,12 @@
 package com.dualsub.tv.ui.player
 
 import android.content.Context
+import android.media.AudioAttributes
+import android.media.AudioFocusRequest
+import android.media.AudioManager
 import android.media.MediaDataSource
 import android.net.Uri
+import android.os.Build
 import android.util.Log
 import java.io.File
 import androidx.lifecycle.ViewModel
@@ -101,6 +105,44 @@ class PlayerViewModel(
 
     private val settings = services.settings
     private val controller = VlcPlayerController(appContext)
+    private val audioManager = appContext.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+
+    // AudioFocus：失去焦点时记录是否需要在恢复后继续播放
+    private var pausedForAudioFocus = false
+    private val audioFocusListener = AudioManager.OnAudioFocusChangeListener { focusChange ->
+        when (focusChange) {
+            AudioManager.AUDIOFOCUS_LOSS -> {
+                // 永久失去（如另一个应用开始播放）→ 暂停，不自动恢复
+                pausedForAudioFocus = false
+                if (controller.isPlaying()) controller.pause()
+            }
+            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT,
+            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> {
+                // 短暂失去（来电、导航语音）→ 暂停，恢复时续播
+                if (controller.isPlaying()) {
+                    pausedForAudioFocus = true
+                    controller.pause()
+                }
+            }
+            AudioManager.AUDIOFOCUS_GAIN -> {
+                if (pausedForAudioFocus) {
+                    pausedForAudioFocus = false
+                    if (!controller.isPlaying()) controller.togglePlayPause()
+                }
+            }
+        }
+    }
+    private val audioFocusRequest: AudioFocusRequest? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
+            .setAudioAttributes(
+                AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_MEDIA)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_MOVIE)
+                    .build()
+            )
+            .setOnAudioFocusChangeListener(audioFocusListener)
+            .build()
+    } else null
 
     private val _primary = MutableStateFlow(SubtitleTrack(style = SubtitleStyle.PRIMARY))
     val primary: StateFlow<SubtitleTrack> = _primary.asStateFlow()
@@ -176,6 +218,9 @@ class PlayerViewModel(
     private var seekJob: Job? = null
     private var pendingSeek: Long? = null
     private var pendingSeekDeadline = 0L
+    // open() 可能先于 attachViews() 执行；先记住参数，等 SurfaceView 就绪再真正播放
+    private var pendingOpenArgs: Triple<Uri, Long, List<String>>? = null
+    private var viewAttached = false
     private var sourcesRestored = false
     private var primarySelectionMade = false
     private var secondarySelectionMade = false
@@ -282,6 +327,14 @@ class PlayerViewModel(
     fun attachVideoLayout(layout: VLCVideoLayout) {
         if (released) return
         controller.attachViews(layout)
+        if (!viewAttached) {
+            viewAttached = true
+            // SurfaceView 就绪后再触发之前挂起的 open()
+            pendingOpenArgs?.let { (uri, startMs, options) ->
+                pendingOpenArgs = null
+                controller.open(uri, startMs, options)
+            }
+        }
     }
 
     /**
@@ -293,12 +346,31 @@ class PlayerViewModel(
     fun release() {
         if (released) return
         released = true
+        abandonAudioFocus()
         tickerJob?.cancel()
         tickerJob = null
         errorCheckJob?.cancel()
         errorCheckJob = null
         subtitleScope.cancel()
         controller.release()
+    }
+
+    /** Activity/Fragment onStop 时调用：切到后台暂停播放。 */
+    fun onAppBackground() {
+        if (released) return
+        if (controller.isPlaying()) {
+            pausedForAudioFocus = true
+            controller.pause()
+        }
+    }
+
+    /** Activity/Fragment onStart 时调用：回到前台恢复播放。 */
+    fun onAppForeground() {
+        if (released) return
+        if (pausedForAudioFocus) {
+            pausedForAudioFocus = false
+            if (!controller.isPlaying()) controller.togglePlayPause()
+        }
     }
 
     // ---------------------------------------------------------------- 菜单操作
@@ -346,6 +418,7 @@ class PlayerViewModel(
      * 连 RMVB 都能播。所以现在只把「这是什么容器」显示出来，播不播交给播放器自己决定。
      */
     private fun startPlayback() {
+        requestAudioFocus()
         restoreAndOpen()
         loadEmbeddedTrackList()
         viewModelScope.launch {
@@ -370,12 +443,14 @@ class PlayerViewModel(
 
             if (released) return@launch
 
-            // libVLC 自己认识 smb://（内置 SMB 模块），也认识 file:// / content:// / http://
-            controller.open(
-                uri = video.uri,
-                startPositionMs = 0L,
-                options = emptyList()
-            )
+            // SurfaceView 可能还没 attach（AndroidView 要等第一次布局才回调），
+            // 所以先检查；若未就绪则存入 pending，等 attachVideoLayout() 时触发。
+            val openArgs = Triple(video.uri, 0L, emptyList<String>())
+            if (viewAttached) {
+                controller.open(openArgs.first, openArgs.second, openArgs.third)
+            } else {
+                pendingOpenArgs = openArgs
+            }
 
             if (!primarySelectionMade) applySource(primarySource, forPrimary = true)
             if (!secondarySelectionMade) applySource(secondarySource, forPrimary = false)
@@ -901,6 +976,28 @@ class PlayerViewModel(
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T =
             PlayerViewModel(appContext, services, video) as T
+    }
+
+    private fun requestAudioFocus() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            audioFocusRequest?.let { audioManager.requestAudioFocus(it) }
+        } else {
+            @Suppress("DEPRECATION")
+            audioManager.requestAudioFocus(
+                audioFocusListener,
+                AudioManager.STREAM_MUSIC,
+                AudioManager.AUDIOFOCUS_GAIN
+            )
+        }
+    }
+
+    private fun abandonAudioFocus() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            audioFocusRequest?.let { audioManager.abandonAudioFocusRequest(it) }
+        } else {
+            @Suppress("DEPRECATION")
+            audioManager.abandonAudioFocus(audioFocusListener)
+        }
     }
 
     private companion object {

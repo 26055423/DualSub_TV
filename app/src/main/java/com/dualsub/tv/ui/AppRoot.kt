@@ -11,6 +11,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.dualsub.tv.core.AppServices
 import com.dualsub.tv.media.VideoItem
 import com.dualsub.tv.ui.library.LibraryScreen
@@ -52,6 +55,19 @@ fun AppRoot(externalVideoUri: Uri? = null) {
                     // 离开页面即释放播放器和字幕任务，不保存进度
                     playerViewModel.release()
                 }
+            }
+            // 监听 Lifecycle：Home 键切到后台时暂停，回到前台时恢复
+            val lifecycleOwner = LocalLifecycleOwner.current
+            DisposableEffect(playerViewModel, lifecycleOwner) {
+                val observer = LifecycleEventObserver { _, event ->
+                    when (event) {
+                        Lifecycle.Event.ON_STOP  -> playerViewModel.onAppBackground()
+                        Lifecycle.Event.ON_START -> playerViewModel.onAppForeground()
+                        else -> Unit
+                    }
+                }
+                lifecycleOwner.lifecycle.addObserver(observer)
+                onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
             }
             PlayerScreen(viewModel = playerViewModel, onBack = { playing = null })
         }

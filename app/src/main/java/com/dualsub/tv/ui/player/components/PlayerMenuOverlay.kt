@@ -3,6 +3,7 @@ package com.dualsub.tv.ui.player.components
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -10,6 +11,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -114,11 +116,15 @@ fun PlayerMenuOverlay(
         }
     }
 
-    Box(
+    BoxWithConstraints(
         modifier = modifier
             .fillMaxSize()
             .background(BeiPalette.Scrim)
     ) {
+        // 菜单总宽不超过屏幕宽度的 85%，避免在 720p（约 640dp）下超出右边界
+        val availableWidth = maxWidth * 0.85f
+        val entryPanelWidth = (availableWidth * 0.65f).coerceAtMost(ENTRY_PANEL_WIDTH)
+        val groupPanelWidth = (availableWidth * 0.35f).coerceAtMost(GROUP_PANEL_WIDTH)
         Row(
             modifier = Modifier
                 .align(Alignment.CenterEnd)
@@ -130,7 +136,7 @@ fun PlayerMenuOverlay(
             // ---- 二级面板（在一级菜单的左边）
             Box(
                 modifier = Modifier
-                    .width(ENTRY_PANEL_WIDTH)
+                    .width(entryPanelWidth)
                     .fillMaxHeight(0.82f)
                     .background(BeiPalette.Panel, RoundedCornerShape(topStart = 14.dp, bottomStart = 14.dp))
             ) {
@@ -164,7 +170,7 @@ fun PlayerMenuOverlay(
             // ---- 一级菜单（最右）
             Column(
                 modifier = Modifier
-                    .width(GROUP_PANEL_WIDTH)
+                    .width(groupPanelWidth)
                     .fillMaxHeight(0.82f)
                     .background(BeiPalette.PanelDeep, RoundedCornerShape(topEnd = 14.dp, bottomEnd = 14.dp))
                     .padding(horizontal = 12.dp, vertical = 20.dp),

@@ -12,6 +12,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -268,12 +269,14 @@ private fun AssSubtitleOverlay(
             val xPx = nx * maxWidthPx
             val yPx = ny * maxHeightPx
 
-            // 对齐锚点：根据 \an 决定文字框的哪个角对齐到 (xPx, yPx)
+            // 用实测文字框宽高计算锚点偏移，避免用容器宽高估算在 4K 屏上漂移
+            var textWidthPx by remember { mutableIntStateOf(0) }
+            var textHeightPx by remember { mutableIntStateOf(0) }
             val xOffset = with(density) {
-                (xPx - anchorXFraction(override.alignment ?: 2) * maxWidthPx * 0.3f).toDp()
+                (xPx - anchorXFraction(override.alignment ?: 2) * textWidthPx).toDp()
             }
             val yOffset = with(density) {
-                (yPx - anchorYFraction(override.alignment ?: 2) * maxHeightPx * 0.1f).toDp()
+                (yPx - anchorYFraction(override.alignment ?: 2) * textHeightPx).toDp()
             }
 
             Box(
@@ -284,7 +287,11 @@ private fun AssSubtitleOverlay(
                 Text(
                     text = annotated,
                     textAlign = TextAlign.Center,
-                    style = baseTextStyle
+                    style = baseTextStyle,
+                    modifier = Modifier.onSizeChanged { size ->
+                        textWidthPx = size.width
+                        textHeightPx = size.height
+                    }
                 )
             }
         }

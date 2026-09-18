@@ -1,5 +1,6 @@
 package com.dualsub.tv
 
+import android.media.AudioManager
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -19,6 +20,8 @@ class MainActivity : ComponentActivity() {
     @OptIn(ExperimentalTvMaterial3Api::class)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // 让系统音量键控制媒体音量通道（而非铃声），方便用户在播放界面调音量
+        volumeControlStream = AudioManager.STREAM_MUSIC
 
         // 支持从文件管理器「用 DualSub TV 打开」直接进播放页
         val externalVideoUri = intent?.data
