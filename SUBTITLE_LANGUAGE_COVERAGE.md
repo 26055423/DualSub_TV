@@ -26,26 +26,41 @@
 
 在能读出语言码的 **1116** 条字幕轨里：
 
-- ✅ 映射表**已覆盖**：**487** 条（43.6%）
-- ❌ 映射表**未覆盖**：**629** 条（56.4%）
+- ✅ 映射表**已覆盖**：**1116** 条（100.0%）
+- ❌ 映射表**未覆盖**：**0** 条（0.0%）
 
-### 未覆盖的语言码（界面上会原样显示 ISO 码）
+**没有未覆盖的语言码** —— 现有映射表已覆盖全部实测数据。
 
-| 语言码 | 字幕轨条数 | 建议显示名 |
+---
+
+## 三、已覆盖的语言码（命中情况）
+
+| 语言码 | 条数 | 现显示名 |
 |---|---|---|
+| `chi` | 77 | 中文 |
+| `spa` | 65 | Español |
+| `fre` | 61 | Français |
+| `por` | 60 | Português |
 | `cze` | 30 | Čeština |
 | `dan` | 30 | Dansk |
+| `ger` | 30 | Deutsch |
 | `gre` | 30 | Ελληνικά |
 | `fin` | 30 | Suomi |
 | `heb` | 30 | עברית |
 | `hun` | 30 | Magyar |
+| `ind` | 30 | Bahasa Indonesia |
+| `ita` | 30 | Italiano |
 | `dut` | 30 | Nederlands |
 | `swe` | 30 | Svenska |
+| `tha` | 30 | ไทย |
 | `tur` | 30 | Türkçe |
 | `may` | 29 | Bahasa Melayu |
 | `pol` | 29 | Polski |
-| `nob` | 28 | Norsk Bokmål |
+| `ara` | 28 | العربية |
+| `jpn` | 28 | 日本語 |
+| `nob` | 28 | Norsk bokmål |
 | `rum` | 28 | Română |
+| `kor` | 27 | 한국어 |
 | `cat` | 26 | Català |
 | `baq` | 26 | Euskara |
 | `glg` | 26 | Galego |
@@ -54,6 +69,9 @@
 | `tel` | 26 | తెలుగు |
 | `kan` | 25 | ಕನ್ನಡ |
 | `mal` | 25 | മലയാളം |
+| `eng` | 12 | English |
+| `vie` | 5 | Tiếng Việt |
+| `rus` | 4 | Русский |
 | `bul` | 4 | Български |
 | `est` | 4 | Eesti |
 | `lit` | 4 | Lietuvių |
@@ -71,27 +89,6 @@
 
 ---
 
-## 三、已覆盖的语言码（命中情况）
-
-| 语言码 | 条数 | 现显示名 |
-|---|---|---|
-| `chi` | 77 | 中文 |
-| `spa` | 65 | Español |
-| `fre` | 61 | Français |
-| `por` | 60 | Português |
-| `ger` | 30 | Deutsch |
-| `ind` | 30 | Bahasa Indonesia |
-| `ita` | 30 | Italiano |
-| `tha` | 30 | ภาษาไทย |
-| `ara` | 28 | العربية |
-| `jpn` | 28 | 日本語 |
-| `kor` | 27 | 한국어 |
-| `eng` | 12 | English |
-| `vie` | 5 | Tiếng Việt |
-| `rus` | 4 | Русский |
-
----
-
 ## 四、字幕编码分布
 
 | CodecID | 条数 | 说明 |
@@ -103,12 +100,20 @@
 
 ---
 
-## 五、`Name` 字段高频取值
+## 五、`Name` 字段高频取值（只统计 MKV）
 
-这些是媒体容器里直接带的轨名（Media3 会把它放进 `MediaFormat.label`，
-对应 App 里的 `TrackInfo.title`）。可以看到主流流媒体用的是「Slanguage / 地区名」两套命名。
+**为什么只统计 MKV**：`Name` 能否变成界面上的轨名，取决于播放框架读不读它——
 
-| Name | 次数 |
+| 容器 | 轨名来自 | Media3 会放进 `MediaFormat.label` 吗 |
+|---|---|---|
+| `.mkv` | `Name`(0x536E) | ✅ 会（`MatroskaExtractor` 写入 label，即 App 的 `TrackInfo.title`） |
+| `.mp4` | `hdlr.name` | ❌ **不会**（`Mp4Extractor` 只读 `hdlr` 的 handlerType，字节码里没有 `label` 引用） |
+| `.avi` | `strn` | ❌ 不适用（AVI 字幕流本就少见，Media3 的 AVI 路径也不设 label） |
+
+所以 MP4 里那些 `SubtitleHandler` / `SoundHandler` 之类（编码器默认名）**不会出现在界面上**，
+本表已把它们排除；同时按 App 的 `NOISE_TITLES` 规则过滤掉了 `*Handler` 类噪声值。
+
+| MKV 的 `Name` | 次数 |
 |---|---|
 | `India` | 75 |
 | `European` | 48 |
@@ -145,11 +150,11 @@
 | `英中` | 8 |
 | `Forced` | 6 |
 | `中文字幕` | 5 |
-| `SubtitleHandler` | 4 |
 | `Français (Canada)` | 4 |
 | `中英文` | 4 |
 | `Español (Latinoamérica)` | 3 |
 | `English` | 3 |
+| `中英文字幕` | 3 |
 
 ---
 
@@ -177,53 +182,50 @@
 
 ---
 
-## 七、结论与建议
+## 七、结论
 
-### 1. 主要问题是**映射表缺口**：56.4% 的字幕轨会显示成 ISO 码
+### 1. 覆盖率 **100%** —— 映射表已补全
 
-`normalizeLanguage()` 现覆盖 15 种语言，实测命中 **43.6%**（487/1116），
-其余 **629 条（56.4%）** 落在下面 35 个码上。
+本报告的**初版**（补表之前）测得：命中 487 条（43.6%）、未覆盖 629 条（56.4%），
+缺口集中在 35 个语言码。
 
-**按收益排序，先补这 21 个**（各 25~30 条，合计 560+ 条）：
+**该缺口已在 `b909340` 修复**：`normalizeLanguage()` 从 15 组扩到 **41 组**，
+除 ISO 639-2 外还一并覆盖了 639-2/B 与 639-1 两种变体
+（如 `cze` / `ces` / `cs` 都指向 `Čeština`）。
 
-```
-cze  dan  gre  fin  heb  hun  dut  swe  tur  may  pol  nob  rum
-cat  baq  glg  hin  tam  tel  kan  mal
-```
+用当前映射表重跑：**1116 条全部命中，未覆盖 0 条**。
 
-**次一批**（各 1~4 条）：`bul est lit lav slv hrv ukr fil ice mac srp slo nor mon`
+### 2. 「轨名」的一个易错点：容器里有 ≠ 界面会显示
 
-上面第二节的表里已经给出每个码的**原语言写法**，可直接搬进 `normalizeLanguage()`。
+`Name` 能不能变成界面上的轨名，取决于**播放框架读不读它**：
 
-### 2. 有一个该过滤掉的噪声值：MP4 的 `hdlr.name` 默认是 `SubtitleHandler`
-
-实测 **4 条**轨的 `Name` 就是 `SubtitleHandler` —— 这是 MP4 里 handler 的默认名，
-**不含任何信息**，却会被 Media3 放进 `MediaFormat.label`，最终以
-`SubtitleHandler（内嵌 #N）` 的样子出现在界面上。
-
-建议在取名时挡掉这类无意义值：`SubtitleHandler` / `Subtitle` / `TextHandler`，
-以及任何以 `Handler` 结尾的纯 ASCII 名字，一律当作空。
-
-### 3. 中文字幕有三套命名习惯，且**都已能正确显示**
-
-| `Name` 取值 | 次数 | 说明 |
+| 容器 | 轨名来源 | 会进界面吗 |
 |---|---|---|
-| `中文` / `英文` | 12 / 9 | 内嵌 MKV 常见；此时 `language` 常为 `und`，走「language 缺失 → 用 title」分支 |
-| `简体` / `繁體` | 8 / 8 | 同上 |
-| `中英` / `英中` / `中英文` | 8 / 8 / 4 | 双语字幕 |
-| `中文字幕` | 5 | |
+| `.mkv` | `Name`(0x536E) | ✅ 会（`MatroskaExtractor` 写进 `MediaFormat.label`，即 App 的 `TrackInfo.title`） |
+| `.mp4` | `hdlr.name` | ❌ **不会**（`Mp4Extractor` 只读 handlerType，字节码里没有 `label` 引用） |
 
-这些值都**不在** `normalizeLanguage()` 的表里，于是被**原样保留**（界面显示 `简体`、`中英`…）——
-**这是对的行为**，不要把它们塞进语言表，否则会被误当成语言码去翻译。
+本报告**早期版本**曾把 MP4 的 `hdlr.name` 默认值 `SubtitleHandler` 报成
+「会被显示的噪声、建议过滤」——**那是错的**：它是本扫描脚本读到的，App 不会显示。
+（代码里后来确实加了 `NOISE_TITLES` 与 `endsWith("Handler")` 过滤，属额外保险，无害。）
 
-### 4. 图片字幕在这台机器上暂时碰不到
+**教训**：给 App 提「显示建议」前，要验证的是 **Media3 交给 App 的字段**，
+而不是容器里恰好存在的字段。
 
-实测字幕编码分布：`S_TEXT/UTF8` 1154、`ASS/SSA` 35、MP4 `TEXT` 7，**PGS / VOBSUB / DVBSUB 为 0 条**。
-所以「图片字幕只能挂主字幕位」这条限制，在现有片源里不会触发。
+### 3. 其余观察（仍然有效）
 
-### 5. 数据来源与可复现性
+- **中文字幕有三套命名**：`中文`/`英文`、`简体`/`繁體`、`中英`/`英中`/`中文字幕`。
+  这些值不在语言表里，会被**原样保留** —— 这是对的行为，别把它们塞进语言表。
+- **图片字幕 0 条**：全机没有 PGS / VOBSUB / DVBSUB 轨；字幕编码只有
+  `S_TEXT/UTF8`、`ASS/SSA` 与 MP4 的 `TEXT`。
+- **多轨片源集中在流媒体剧集**：单文件最多 **42 条**字幕轨（War Machine），
+  这批片源最能考验名称缩短逻辑。
 
-- 扫描 **14730** 个文件：mp4 13741 / avi 628 / mov 258 / mkv 96 / m4v 7；其中 **57 个**带内嵌字幕轨
-- 解析器为自写的容器头解析（MKV EBML / MP4 ISO-BMFF / AVI RIFF），**不依赖 ffprobe / mkvtoolnix**
-- 未覆盖统计**按条数**计；语言码比较大小写不敏感；`und`（未定义）不计入缺口
-- 各片源逐条的完整字段见同目录的 `SUBTITLE_TRACK_NAMES.md`
+### 4. 数据来源与可复现性
+
+- 扫描 **14730** 个文件（mp4 13741 / avi 628 / mov 258 / mkv 96 / m4v 7），
+  其中 **57 个**含内嵌字幕轨、共 **1196 条**
+- 解析器为自写的容器头解析（MKV EBML / MP4 ISO-BMFF / AVI RIFF），
+  **不依赖 ffprobe / mkvtoolnix**
+- 覆盖率**按条数**统计；语言码比较大小写不敏感；`und`（未定义）不计入缺口
+- 各片源逐条的完整字段见同目录 `SUBTITLE_TRACK_NAMES.md`
+- 映射表对照版本：`PlayerScreen.normalizeLanguage()`（2026-09-18，41 组）
