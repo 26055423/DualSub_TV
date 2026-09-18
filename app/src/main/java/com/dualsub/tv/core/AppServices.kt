@@ -13,6 +13,7 @@ import com.dualsub.tv.network.smb.SmbLocationRegistry
 import com.dualsub.tv.network.smb.SmbMediaDataSource
 import com.dualsub.tv.network.smb.SmbPaths
 import com.dualsub.tv.network.smb.SmbSessionPool
+import com.dualsub.tv.network.webdrive.AliAuthManager
 import com.dualsub.tv.network.webdrive.BaiduAuthManager
 import com.dualsub.tv.network.webdrive.QuarkAuthManager
 
@@ -40,10 +41,13 @@ class AppServices(context: Context) {
     /** 百度网盘登录状态管理（Token 持久化由 NetworkScreen 写入 SettingsStore）。 */
     val baiduAuth = BaiduAuthManager()
 
-    val dataSourceFactory: DataSource.Factory =
-        DualSubDataSourceFactory(appContext, smbPool, smbRegistry, quarkAuth, baiduAuth)
+    /** 阿里云盘登录状态管理（Token 持久化由 NetworkScreen 写入 SettingsStore）。 */
+    val aliAuth = AliAuthManager()
 
-    val browserFactory = RemoteBrowserFactory(smbPool, quarkAuth, baiduAuth)
+    val dataSourceFactory: DataSource.Factory =
+        DualSubDataSourceFactory(appContext, smbPool, smbRegistry, quarkAuth, baiduAuth, aliAuth)
+
+    val browserFactory = RemoteBrowserFactory(smbPool, quarkAuth, baiduAuth, aliAuth)
 
     val dlnaDiscovery = DlnaDiscovery(appContext)
 

@@ -29,6 +29,7 @@ junit = "4.13.2"
 androidxJunit = "1.2.1"
 zxing = "3.5.3"
 okhttp = "4.12.0"
+sardine = "0.9"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -55,6 +56,7 @@ junit = { group = "junit", name = "junit", version.ref = "junit" }
 androidx-junit = { group = "androidx.test.ext", name = "junit", version.ref = "androidxJunit" }
 zxing-core = { group = "com.google.zxing", name = "core", version.ref = "zxing" }
 okhttp = { group = "com.squareup.okhttp3", name = "okhttp", version.ref = "okhttp" }
+sardine-android = { group = "com.github.thegrizzlylabs", name = "sardine-android", version.ref = "sardine" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

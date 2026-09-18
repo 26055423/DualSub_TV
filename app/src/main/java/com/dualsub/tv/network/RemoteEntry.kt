@@ -5,7 +5,9 @@ enum class RemoteType(val displayName: String) {
     SMB("SMB / 共享文件夹"),
     DLNA("DLNA / 媒体服务器"),
     QUARK("夸克网盘"),
-    BAIDU("百度网盘")
+    BAIDU("百度网盘"),
+    WEBDAV("WebDAV"),
+    ALI("阿里云盘")
 }
 
 /**

@@ -35,6 +35,7 @@ import com.dualsub.tv.media.VideoItem
 import com.dualsub.tv.network.RemoteLocation
 import com.dualsub.tv.network.RemoteType
 import com.dualsub.tv.network.dlna.DlnaDevice
+import com.dualsub.tv.network.webdrive.AliAuthState
 import com.dualsub.tv.network.webdrive.BaiduAuthState
 import com.dualsub.tv.network.webdrive.QuarkAuthState
 import kotlinx.coroutines.launch
@@ -54,6 +55,15 @@ private sealed interface FormMode {
 
     /** 百度网盘 Device Code 登录。 */
     data object BaiduLogin : FormMode
+
+    /** 添加 WebDAV 服务器。 */
+    data object WebDavCreate : FormMode
+
+    /** 编辑已有 WebDAV 服务器。 */
+    data class WebDavEdit(val location: RemoteLocation) : FormMode
+
+    /** 阿里云盘扫码登录。 */
+    data object AliLogin : FormMode
 }
 
 /**
@@ -77,6 +87,7 @@ fun NetworkScreen(
 
     val quarkState by services.quarkAuth.state.collectAsState()
     val baiduState by services.baiduAuth.state.collectAsState()
+    val aliState by services.aliAuth.state.collectAsState()
 
     LaunchedEffect(Unit) {
         services.settings.remoteLocations().collect { list ->
@@ -91,6 +102,17 @@ fun NetworkScreen(
             }?.let {
                 if (!services.baiduAuth.isLoggedIn) {
                     services.baiduAuth.restoreFromToken(it.token!!, it.refreshToken.orEmpty())
+                }
+            }
+            list.firstOrNull {
+                it.type == RemoteType.ALI && !it.token.isNullOrBlank()
+            }?.let {
+                if (!services.aliAuth.isLoggedIn) {
+                    services.aliAuth.restoreFromToken(
+                        it.token!!,
+                        it.refreshToken.orEmpty(),
+                        it.share.orEmpty()
+                    )
                 }
             }
         }
@@ -206,6 +228,50 @@ fun NetworkScreen(
             )
             return
         }
+
+        is FormMode.WebDavCreate -> {
+            WebDavServerForm(
+                onCancel = { form = FormMode.Closed },
+                onSave = { location ->
+                    persistAll(locations.filterNot { it.id == location.id } + location)
+                    form = FormMode.Closed
+                    browsing = location
+                }
+            )
+            return
+        }
+
+        is FormMode.WebDavEdit -> {
+            WebDavServerForm(
+                initial = mode.location,
+                onCancel = { form = FormMode.Closed },
+                onSave = { location ->
+                    persistAll(locations.map { if (it.id == mode.location.id) location else it })
+                    form = FormMode.Closed
+                }
+            )
+            return
+        }
+
+        is FormMode.AliLogin -> {
+            AliLoginScreen(
+                aliAuth = services.aliAuth,
+                onSuccess = { access, refresh, driveId ->
+                    val existing = locations.firstOrNull { it.type == RemoteType.ALI }
+                    val location = (existing ?: RemoteLocation(
+                        id = "ali:account",
+                        type = RemoteType.ALI,
+                        displayName = "阿里云盘",
+                        host = "api.aliyundrive.com"
+                    )).copy(token = access, refreshToken = refresh, share = driveId)
+                    persistAll(locations.filterNot { it.id == location.id } + location)
+                    form = FormMode.Closed
+                    browsing = location
+                },
+                onCancel = { form = FormMode.Closed }
+            )
+            return
+        }
     }
 
     Column(
@@ -230,6 +296,9 @@ fun NetworkScreen(
                     form = FormMode.Create(prefix.ifEmpty { null })
                 }
             ) { Text("添加 SMB 服务器", fontSize = 14.sp) }
+            Button(onClick = { form = FormMode.WebDavCreate }) {
+                Text("添加 WebDAV", fontSize = 14.sp)
+            }
             Button(
                 onClick = {
                     busy = true
@@ -330,6 +399,34 @@ fun NetworkScreen(
                     }
                 ) { Text("退出百度", fontSize = 14.sp) }
             }
+
+            val aliLoggedIn = aliState is AliAuthState.LoggedIn
+            Button(
+                onClick = {
+                    if (aliLoggedIn) {
+                        browsing = locations.firstOrNull { it.type == RemoteType.ALI }
+                            ?: RemoteLocation(
+                                id = "ali:account", type = RemoteType.ALI,
+                                displayName = "阿里云盘", host = "api.aliyundrive.com"
+                            )
+                    } else {
+                        form = FormMode.AliLogin
+                    }
+                }
+            ) {
+                Text(
+                    text = if (aliLoggedIn) "阿里云盘（已登录）" else "登录阿里云盘",
+                    fontSize = 14.sp
+                )
+            }
+            if (aliLoggedIn) {
+                Button(
+                    onClick = {
+                        services.aliAuth.logout()
+                        persistAll(locations.filterNot { it.type == RemoteType.ALI })
+                    }
+                ) { Text("退出阿里", fontSize = 14.sp) }
+            }
         }
 
         message?.let {
@@ -388,7 +485,9 @@ fun NetworkScreen(
 
             items(locations, key = { it.id }) { location ->
                 // 网盘账号在按钮行已有入口，列表里跳过避免重复
-                if (location.type == RemoteType.QUARK || location.type == RemoteType.BAIDU) return@items
+                if (location.type == RemoteType.QUARK
+                    || location.type == RemoteType.BAIDU
+                    || location.type == RemoteType.ALI) return@items
 
                 Card(onClick = { browsing = location }) {
                     Row(
@@ -420,7 +519,13 @@ fun NetworkScreen(
                         }
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             Button(onClick = { browsing = location }) { Text("进入", fontSize = 14.sp) }
-                            Button(onClick = { form = FormMode.Edit(location) }) { Text("编辑", fontSize = 14.sp) }
+                            Button(onClick = {
+                                form = if (location.type == RemoteType.WEBDAV) {
+                                    FormMode.WebDavEdit(location)
+                                } else {
+                                    FormMode.Edit(location)
+                                }
+                            }) { Text("编辑", fontSize = 14.sp) }
                             Button(onClick = {
                                 services.smbPool.invalidate(location.host)
                                 persistAll(locations.filterNot { it.id == location.id })

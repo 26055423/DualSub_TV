@@ -11,6 +11,9 @@ import com.dualsub.tv.network.smb.SmbDataSource
 import com.dualsub.tv.network.smb.SmbLocationRegistry
 import com.dualsub.tv.network.smb.SmbPaths
 import com.dualsub.tv.network.smb.SmbSessionPool
+import com.dualsub.tv.network.webdrive.AliApiClient
+import com.dualsub.tv.network.webdrive.AliAuthManager
+import com.dualsub.tv.network.webdrive.AliTokenExpiredException
 import com.dualsub.tv.network.webdrive.BaiduApiClient
 import com.dualsub.tv.network.webdrive.BaiduAuthManager
 import com.dualsub.tv.network.webdrive.BaiduTokenExpiredException
@@ -23,6 +26,7 @@ import kotlinx.coroutines.runBlocking
  * - `smb://` → SmbDataSource
  * - `quark://fid` → 实时获取夸克直链，再走 DefaultDataSource
  * - `baidu://fsid` → 实时获取百度 dlink，再走 DefaultDataSource（携带 UA 头）
+ * - `ali://driveId/fileId` → 优先转码流，降级直链，注入 Referer 头
  * - 其余（`content://`、`file://`、DLNA 的 `http://`）→ DefaultDataSource
  */
 @UnstableApi
@@ -31,14 +35,15 @@ class DualSubDataSourceFactory(
     private val pool: SmbSessionPool,
     private val registry: SmbLocationRegistry,
     private val quarkAuth: QuarkAuthManager,
-    private val baiduAuth: BaiduAuthManager
+    private val baiduAuth: BaiduAuthManager,
+    private val aliAuth: AliAuthManager
 ) : DataSource.Factory {
 
     private val context = context.applicationContext
     private val listeners = mutableListOf<TransferListener>()
 
     override fun createDataSource(): DataSource =
-        DualSubDataSource(context, pool, registry, quarkAuth, baiduAuth, listeners)
+        DualSubDataSource(context, pool, registry, quarkAuth, baiduAuth, aliAuth, listeners)
 
     fun addTransferListener(listener: TransferListener) {
         listeners += listener
@@ -52,6 +57,7 @@ private class DualSubDataSource(
     private val registry: SmbLocationRegistry,
     private val quarkAuth: QuarkAuthManager,
     private val baiduAuth: BaiduAuthManager,
+    private val aliAuth: AliAuthManager,
     private val listeners: List<TransferListener>
 ) : DataSource {
 
@@ -104,6 +110,46 @@ private class DualSubDataSource(
                             "Authorization" to "Bearer ${baiduAuth.accessToken}"
                         )
                     )
+                    .build()
+            }
+
+            "ali" -> {
+                // ali://driveId/fileId → 优先转码流（无限速），降级直链（需 Referer）
+                val driveId = dataSpec.uri.host
+                    ?: throw IOException("无效的阿里云盘 URI：${dataSpec.uri}")
+                val fileId = dataSpec.uri.path?.trimStart('/')
+                    ?: throw IOException("无效的阿里云盘 URI：${dataSpec.uri}")
+
+                val resolvedUrl = runCatching {
+                    kotlinx.coroutines.runBlocking {
+                        val api = try {
+                            aliAuth.apiClient()
+                        } catch (e: Exception) {
+                            throw IOException("未登录阿里云盘")
+                        }
+                        // 尝试转码流，失败降级到直链
+                        val transcodeUrl = runCatching {
+                            api.getTranscodingUrl(driveId, fileId)
+                        }.getOrNull()
+
+                        if (transcodeUrl != null) {
+                            transcodeUrl
+                        } else {
+                            try {
+                                api.getDownloadUrl(driveId, fileId)
+                            } catch (e: AliTokenExpiredException) {
+                                aliAuth.tryRefreshToken()
+                                    ?: throw IOException("阿里云盘授权已过期，请重新登录")
+                                api.getDownloadUrl(driveId, fileId)
+                            }
+                        }
+                    }
+                }.getOrElse { throw IOException("阿里云盘链接获取失败：${it.message}", it) }
+
+                Log.i(TAG, "阿里云盘链接：$resolvedUrl")
+                dataSpec.buildUpon()
+                    .setUri(android.net.Uri.parse(resolvedUrl))
+                    .setHttpRequestHeaders(mapOf("Referer" to AliApiClient.ALI_REFERER))
                     .build()
             }
 
