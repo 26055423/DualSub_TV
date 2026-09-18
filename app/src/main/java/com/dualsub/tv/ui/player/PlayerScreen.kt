@@ -366,9 +366,10 @@ fun PlayerScreen(
                         true
                     }
 
-                    // OK 键 = 播放/暂停（与长按左右形成一组：一个控状态，一个控进度）
+                    // OK 键 = 播放/暂停；同时保证控制条可见（可能已自动隐藏）
                     Key.Enter, Key.DirectionCenter -> {
                         viewModel.togglePlayPause()
+                        showControls = true
                         true
                     }
 
@@ -380,11 +381,13 @@ fun PlayerScreen(
                         true
                     }
 
-                    // 左/右：短按跳 10 秒；**长按照住不放则连续跳**，步长随按住时长递增
+                    // 左/右：短按跳 10 秒；**长按照住不放则连续跳**，步长随按住时长递增。
+                    // 快进/退时同步显示控制条，让用户看到进度条位置。
                     Key.DirectionLeft -> {
                         val step = longPressSeekMs(event.nativeKeyEvent.repeatCount)
                         viewModel.seekBy(-step)
                         seekHint = "⏪ -${step / 1000}s"
+                        showControls = true
                         true
                     }
 
@@ -392,18 +395,21 @@ fun PlayerScreen(
                         val step = longPressSeekMs(event.nativeKeyEvent.repeatCount)
                         viewModel.seekBy(step)
                         seekHint = "⏩ +${step / 1000}s"
+                        showControls = true
                         true
                     }
 
                     Key.MediaFastForward -> {
                         viewModel.seekBy(SEEK_STEP_MS)
                         seekHint = "⏩ +10s"
+                        showControls = true
                         true
                     }
 
                     Key.MediaRewind -> {
                         viewModel.seekBy(-SEEK_STEP_MS)
                         seekHint = "⏪ -10s"
+                        showControls = true
                         true
                     }
 
