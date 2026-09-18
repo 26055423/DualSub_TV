@@ -36,6 +36,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -70,6 +71,7 @@ import com.dualsub.tv.ui.player.components.PlayerInfoOverlay
 import com.dualsub.tv.ui.player.components.SubtitleOverlay
 import com.dualsub.tv.ui.player.components.selectableIndices
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import org.videolan.libvlc.util.VLCVideoLayout
 
 /**
@@ -155,6 +157,11 @@ fun PlayerScreen(
 
     // 焦点握在自己手里，按键才一定到这个 Box
     val focusRequester = remember { FocusRequester() }
+
+    // 长按预览的超时兜底：停止收到 KeyDown 超过 300ms 则视为松键并恢复播放。
+    // 部分蓝牙遥控不上报 KeyUp，这个 Job 作为保险。
+    val previewTimeoutScope = rememberCoroutineScope()
+    val previewTimeoutJob = remember { androidx.compose.runtime.mutableStateOf<kotlinx.coroutines.Job?>(null) }
 
     val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
@@ -251,6 +258,8 @@ fun PlayerScreen(
                 if (event.type == KeyEventType.KeyUp) {
                     return@onPreviewKeyEvent when (event.key) {
                         Key.DirectionLeft, Key.DirectionRight -> {
+                            previewTimeoutJob.value?.cancel()
+                            previewTimeoutJob.value = null
                             viewModel.resumeFromPreview()
                             true
                         }
@@ -392,7 +401,8 @@ fun PlayerScreen(
                     }
 
                     // 左/右：短按跳 10 秒；长按进入逐帧预览模式（暂停播放、每次解码目标帧）。
-                    // 松键时 KeyUp 分支会调 resumeFromPreview 恢复播放。
+                    // 松键时 KeyUp 分支会调 resumeFromPreview 恢复播放；
+                    // 同时每次 KeyDown 都重置 300ms 定时器，兜底蓝牙遥控不上报 KeyUp 的情况。
                     Key.DirectionLeft -> {
                         val repeat = event.nativeKeyEvent.repeatCount
                         if (repeat == 0) {
@@ -402,6 +412,11 @@ fun PlayerScreen(
                             val step = longPressSeekMs(repeat)
                             viewModel.seekPreview(-step)
                             seekHint = "⏪ -${step / 1000}s"
+                            previewTimeoutJob.value?.cancel()
+                            previewTimeoutJob.value = previewTimeoutScope.launch {
+                                delay(PREVIEW_RELEASE_TIMEOUT_MS)
+                                viewModel.resumeFromPreview()
+                            }
                         }
                         showControls = true
                         true
@@ -416,6 +431,11 @@ fun PlayerScreen(
                             val step = longPressSeekMs(repeat)
                             viewModel.seekPreview(step)
                             seekHint = "⏩ +${step / 1000}s"
+                            previewTimeoutJob.value?.cancel()
+                            previewTimeoutJob.value = previewTimeoutScope.launch {
+                                delay(PREVIEW_RELEASE_TIMEOUT_MS)
+                                viewModel.resumeFromPreview()
+                            }
                         }
                         showControls = true
                         true
@@ -976,6 +996,7 @@ private fun longPressSeekMs(repeatCount: Int): Long {
 private const val SEEK_STEP_MS = 10_000L
 private const val BUFFERING_HINT_DELAY_MS = 700L
 private const val SEEK_HINT_DURATION_MS = 600L
+private const val PREVIEW_RELEASE_TIMEOUT_MS = 300L
 
 /** 无依赖的旋转圆弧缓冲指示器（tv-material 1.0.0 没有 CircularProgressIndicator）。 */
 @Composable
