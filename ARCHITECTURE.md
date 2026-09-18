@@ -54,7 +54,7 @@ Android TV / 大屏电视播放器，核心功能是同时渲染**两路相互�
 | 协程 | kotlinx-coroutines-android | 1.9.0 |
 | DI | 手写 `AppServices` 容器 | — |
 
-**编译 JDK 要求**：当前构建机上的 JDK 25（SapMachine）与 Kotlin 编译器不兼容，需显式指定 JDK 17：
+**编译 JDK 要求**：需使用 JDK 17，部分环境默认 JDK 版本过高会导致 Kotlin 编译器报错，可显式指定：
 
 ```bash
 JAVA_HOME=/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home \

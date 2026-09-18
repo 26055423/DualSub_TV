@@ -17,7 +17,7 @@
 | Gradle 8.9 | `~/.gradle/wrapper/dists/gradle-8.9-bin/local/gradle-8.9/bin/gradle` |
 | Gradle 8.7 | `~/.gradle/wrapper/dists/gradle-8.7-bin/544c35d6/gradle-8.7/bin/gradle` |
 
-> **注意**：系统默认 Java 是 SapMachine 25，编译时必须显式指定 Java 17，否则 Gradle 8.7/8.9 会报 `Unsupported class file major version`。
+> **注意**：编译时必须使用 Java 17，若默认 JDK 版本过高，Gradle 会报 `Unsupported class file major version`，需显式指定 Java 17。
 
 每次编译前设置环境变量：
 ```bash
