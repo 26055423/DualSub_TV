@@ -25,7 +25,8 @@ class EmbeddedAssParser(initializationData: List<ByteArray>) {
             }
         }
         val offsetMs = sampleTimeUs / 1000
-        return AssParser.parse(prefix + dialogue).map { cue ->
+        // AssParser only recognises lines starting with "Dialogue: "; Matroska samples omit this prefix.
+        return AssParser.parse(prefix + "Dialogue: " + dialogue).map { cue ->
             cue.copy(startMs = offsetMs + cue.startMs, endMs = offsetMs + cue.endMs)
         }
     }

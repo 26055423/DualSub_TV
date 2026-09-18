@@ -194,16 +194,16 @@ class PlayerViewModel(
 
     private var tickerJob: Job? = null
     private var errorCheckJob: Job? = null
-    private var released = false
+    @Volatile private var released = false
 
     /** 是否曾经成功进入播放状态，用于区分「刚打开还没起来」与「真的失败了」。 */
-    private var everPlayed = false
+    @Volatile private var everPlayed = false
 
     /** 自动选轨只做一次；之后尊重用户的手动选择。 */
-    private var autoAudioPicked = false
+    @Volatile private var autoAudioPicked = false
 
     /** 音量兜底只做一次，避免覆盖用户后来手动调的值。 */
-    private var volumeFixedOnce = false
+    @Volatile private var volumeFixedOnce = false
 
     init {
         subtitleScope.launch {

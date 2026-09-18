@@ -63,8 +63,7 @@ object InAppLog {
 
     private val lines = ArrayDeque<String>()
 
-    @Volatile
-    private var started = false
+    private val started = java.util.concurrent.atomic.AtomicBoolean(false)
 
     /**
      * 开始收集（幂等，重复调用无副作用）。
@@ -72,8 +71,7 @@ object InAppLog {
      * 从 `Application.onCreate` 调一次即可 —— 越早开始，越不容易漏掉启动阶段的报错。
      */
     fun start() {
-        if (started) return
-        started = true
+        if (!started.compareAndSet(false, true)) return
 
         Thread({
             runCatching {

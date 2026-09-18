@@ -120,11 +120,22 @@ class VlcPlayerController(context: Context) {
 
     private var released = false
 
+    // One-shot seek target set by open(); consumed on the first Playing event so libVLC
+    // has already parsed the container before we seek (setting mediaPlayer.time before
+    // the first Playing event is silently ignored by libVLC).
+    @Volatile private var pendingStartPositionMs = 0L
+
     init {
         mediaPlayer.setEventListener { event ->
             when (event.type) {
-                MediaPlayer.Event.Playing ->
+                MediaPlayer.Event.Playing -> {
+                    val seekTarget = pendingStartPositionMs
+                    if (seekTarget > 0L) {
+                        pendingStartPositionMs = 0L
+                        mediaPlayer.time = seekTarget
+                    }
                     onState?.invoke(true, false)
+                }
 
                 MediaPlayer.Event.Paused, MediaPlayer.Event.Stopped ->
                     onState?.invoke(false, false)
@@ -198,8 +209,8 @@ class VlcPlayerController(context: Context) {
         // 保留引用供读轨道用；此处**不** release（在 release() 里统一释放）
         currentMedia?.release()
         currentMedia = media
+        pendingStartPositionMs = startPositionMs
         mediaPlayer.play()
-        if (startPositionMs > 0L) mediaPlayer.time = startPositionMs
     }
 
     fun togglePlayPause() {
