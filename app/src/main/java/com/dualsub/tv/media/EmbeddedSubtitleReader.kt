@@ -81,6 +81,49 @@ object EmbeddedSubtitleReader {
         return SubtitleWindow(startMs, endMs, cues)
     }
 
+    /**
+     * Lifetime of one video; calls and close must be serialized on the subtitle I/O mutex.
+     * Only Matroska reuses its source, extractor and index. Other containers keep the
+     * bounded MediaExtractorCompat fallback, opening fresh sources/extractors per read.
+     * Track/time cue reuse is handled separately by EmbeddedCueCache for either path.
+     */
+    internal class Session(private val context: Context, private val sourceFactory: () -> MediaDataSource) : java.io.Closeable {
+        private var source: MediaDataSource? = null
+        private var reader: SparseMatroskaReader? = null
+        private var nonMatroska = false
+        private var closed = false
+
+        suspend fun readWindow(tracks: Set<Int>, startMs: Long, endMs: Long,
+            onProgress: (SubtitleWindow) -> Unit = {}): SubtitleWindow {
+            check(!closed) { "字幕会话已关闭" }
+            try {
+                if (reader == null && !nonMatroska) {
+                    val opened = sourceFactory()
+                    source = opened
+                    if (isMatroska(opened)) reader = SparseMatroskaReader.open(opened)
+                    else { nonMatroska = true; discardReader() }
+                }
+                return reader?.readNext(tracks, startMs, endMs, onProgress)
+                    ?: EmbeddedSubtitleReader.readWindow(context, sourceFactory, tracks, startMs, endMs, onProgress)
+            } catch (failure: Throwable) {
+                // A cancelled/failed extractor can contain a partial sample or EBML element.
+                // Retry with a fresh source; never reuse that half-initialized state.
+                try { discardReader() } catch (cleanup: Throwable) { failure.addSuppressed(cleanup) }
+                throw failure
+            }
+        }
+
+        private fun discardReader() {
+            val oldReader = reader
+            val oldSource = source
+            reader = null
+            source = null
+            try { oldReader?.close() } finally { oldSource?.close() }
+        }
+
+        override fun close() { closed = true; discardReader() }
+    }
+
     private fun isMatroska(source: MediaDataSource): Boolean {
         val bytes = ByteArray(4)
         var read = 0

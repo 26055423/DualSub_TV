@@ -8,7 +8,7 @@ import java.io.IOException
 /** Unlike DefaultExtractorInput, skipping never downloads discarded media payloads. */
 internal class RandomAccessExtractorInput(
     private val source: MediaDataSource,
-    private val checkActive: () -> Unit,
+    private var checkActive: () -> Unit,
     private val byteBudget: Long = 8L * 1024 * 1024
 ) : ExtractorInput {
     private val fileSize = source.size.also { require(it >= 0) { "字幕随机读取需要已知文件长度" } }
@@ -19,6 +19,14 @@ internal class RandomAccessExtractorInput(
     private var cacheSize = 0
     var bytesRead = 0L
         private set
+
+    /** A session keeps its source/cache, but each operation has its own cancellation and budget. */
+    fun beginRead(checkActive: () -> Unit) {
+        this.checkActive = checkActive
+        bytesRead = 0L
+    }
+
+    fun endRead() { checkActive = {} }
 
     fun reposition(position: Long) {
         require(position in 0..fileSize)

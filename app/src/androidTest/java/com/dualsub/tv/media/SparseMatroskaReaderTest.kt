@@ -3,6 +3,8 @@ package com.dualsub.tv.media
 import android.media.MediaDataSource
 import android.util.Log
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.*
@@ -89,6 +91,64 @@ class SparseMatroskaReaderTest {
         assertTrue(source.readBytes < 100)
     }
 
+    @Test fun sessionReusesIndexAcrossSeekAndTrackSwitchAndReleasesSource() = runBlocking(Dispatchers.IO) {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val source = largeFixture(withSubtitleIndex = true)
+        var opens = 0
+        val session = EmbeddedSubtitleReader.Session(context) { opens++; source }
+        val first = session.readWindow(setOf(1), 2_700_000, 2_760_000)
+        val indexReads = source.indexReads
+        assertTrue("First read must visit the Cues region", indexReads > 0)
+        val second = session.readWindow(setOf(1, 2), 2_760_000, 2_820_000)
+        val fresh = SparseMatroskaReader.readWindow(largeFixture(withSubtitleIndex = true), setOf(1, 2), 2_760_000, 2_820_000)
+        assertEquals(fresh.cues, second.cues)
+        assertTrue(first.usesSubtitleIndex && second.usesSubtitleIndex)
+        assertEquals("A warm session must not reread Cues", indexReads, source.indexReads)
+        val backwards = session.readWindow(setOf(2), 0, 60_000)
+        val backwardsFresh = SparseMatroskaReader.readWindow(largeFixture(withSubtitleIndex = true), setOf(2), 0, 60_000)
+        assertEquals(backwardsFresh.cues, backwards.cues)
+        assertEquals("Reverse seek must reuse Cues too", indexReads, source.indexReads)
+        assertEquals(1, opens)
+        assertFalse(source.closed)
+        session.close()
+        assertTrue(source.closed)
+        try { session.readWindow(setOf(2), 0, 60_000); fail("Closed session was reused") }
+        catch (_: IllegalStateException) { }
+    }
+
+    @Test fun cancelledSessionDiscardsPartialParserAndCanRetry() = runBlocking(Dispatchers.IO) {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val sources = mutableListOf<SparseSource>()
+        val session = EmbeddedSubtitleReader.Session(context) {
+            largeFixture(withSubtitleIndex = true).also { sources += it }
+        }
+        try {
+            try {
+                session.readWindow(setOf(1, 2), 2_700_000, 2_760_000) { throw CancellationException("seek") }
+                fail("Expected cancellation")
+            } catch (_: CancellationException) { }
+            assertTrue(sources.single().closed)
+            val retried = session.readWindow(setOf(1, 2), 2_700_000, 2_760_000)
+            val fresh = SparseMatroskaReader.readWindow(largeFixture(withSubtitleIndex = true), setOf(1, 2), 2_700_000, 2_760_000)
+            assertEquals(fresh.cues, retried.cues)
+            assertEquals(2, sources.size)
+        } finally { session.close() }
+        assertTrue(sources.all { it.closed })
+    }
+
+    @Test fun sessionAlsoReusesSeekMapWhenSubtitleIndexIsAbsent() = runBlocking(Dispatchers.IO) {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        EmbeddedSubtitleReader.Session(context) { largeFixture() }.use { session ->
+            session.readWindow(setOf(1), 0, 60_000)
+            for (start in listOf(2_700_000L, 60_000L)) {
+                val actual = session.readWindow(setOf(1, 2), start, start + 60_000)
+                val fresh = SparseMatroskaReader.readWindow(largeFixture(), setOf(1, 2), start, start + 60_000)
+                assertFalse(actual.usesSubtitleIndex)
+                assertEquals(fresh.cues, actual.cues)
+            }
+        }
+    }
+
     /** Sparse logical file: 80 clusters with 256 MiB video blocks, no huge allocation. */
     private fun largeFixture(withPgs: Boolean = false, withSubtitleIndex: Boolean = false): SparseSource {
         val source = SparseSource()
@@ -140,17 +200,22 @@ class SparseMatroskaReaderTest {
         source.put(segmentBase, info + tracks + seekHead(cuesAt))
         clusters.forEach { (at, parts) -> parts.forEach { (offset, data) -> source.put(segmentBase + at + offset, data) } }
         source.put(segmentBase + cuesAt, cues)
+        source.indexRange = (segmentBase + cuesAt) until (segmentBase + cuesAt + cues.size)
         return source
     }
 
     private class SparseSource : MediaDataSource() {
         val parts = TreeMap<Long, ByteArray>()
         var transferred = 0L
+        var closed = false
+        var indexRange = LongRange.EMPTY
+        var indexReads = 0
         fun put(position: Long, bytes: ByteArray) { parts[position] = bytes }
         override fun getSize(): Long = requireNotNull(parts.lastEntry()).let { it.key + it.value.size }
         override fun readAt(position: Long, buffer: ByteArray, offset: Int, size: Int): Int {
             if (position >= this.size) return -1
             val count = minOf(size.toLong(), this.size - position).toInt()
+            if (!indexRange.isEmpty() && position <= indexRange.last && position + count > indexRange.first) indexReads++
             buffer.fill(0, offset, offset + count)
             for ((start, data) in parts) {
                 val from = maxOf(position, start)
@@ -160,7 +225,7 @@ class SparseMatroskaReaderTest {
             transferred += count
             return count
         }
-        override fun close() = Unit
+        override fun close() { closed = true }
     }
     private fun bytes(value: Long, size: Int) = ByteArray(size) { (value ushr (8 * (size - it - 1))).toByte() }
     private fun uint(id: Long, value: Long) = element(id, bytes(value, (1..8).first { it == 8 || value < (1L shl (8 * it)) }))

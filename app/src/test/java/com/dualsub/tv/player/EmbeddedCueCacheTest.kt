@@ -38,7 +38,7 @@ class EmbeddedCueCacheTest {
         var oldProgress: ((SubtitleWindow) -> Unit)? = null
         val cache = EmbeddedCueCache(backgroundScope, read = { tracks, start, end, progress ->
             if (2 in tracks) { oldProgress = progress; awaitCancellation() }
-            SubtitleWindow(start, end, tracks.associateWith { listOf(cue.copy(text = "新轨")) })
+            SubtitleWindow(start, end, tracks.associateWith { listOf(cue.copy(startMs = start + 1000, endMs = start + 3000, text = "新轨")) })
         })
         cache.request(setOf(2), 600_000)
         runCurrent()
@@ -66,7 +66,7 @@ class EmbeddedCueCacheTest {
         assertEquals(2, starts.size)
         cache.request(setOf(2), 75_000)
         runCurrent()
-        assertEquals(listOf(0L, 0L, 30_000L), starts)
+        assertEquals(listOf(0L, 60_000L, 90_000L), starts)
     }
 
     @Test fun `both tracks use one bounded read and stationary playback does not rescan`() = runTest {
@@ -96,7 +96,7 @@ class EmbeddedCueCacheTest {
             maximum = maxOf(maximum, concurrent)
             try {
                 if (calls == 1) withContext(NonCancellable) { oldFinishes.await() }
-                SubtitleWindow(start, end, tracks.associateWith { listOf(cue.copy(text = start.toString())) })
+                SubtitleWindow(start, end, tracks.associateWith { listOf(cue.copy(startMs = start + 1000, endMs = start + 3000, text = start.toString())) })
             } finally { concurrent-- }
         })
         cache.request(setOf(2), 0)
@@ -158,4 +158,107 @@ class EmbeddedCueCacheTest {
         assertEquals(1, reads)
         assertNull(cache.state.value.error)
     }
+
+    @Test fun `switching secondary reads only its missing track and retains primary while loading`() = runTest {
+        val calls = mutableListOf<Set<Int>>()
+        val finish = CompletableDeferred<Unit>()
+        val cache = EmbeddedCueCache(backgroundScope, read = { tracks, start, end, _ ->
+            calls += tracks
+            if (4 in tracks) finish.await()
+            SubtitleWindow(start, end, tracks.associateWith { listOf(cue.copy(text = "track $it")) })
+        })
+        cache.request(setOf(2, 3), 1000)
+        runCurrent()
+        cache.request(setOf(2, 4), 1000)
+        runCurrent()
+        assertEquals(listOf(setOf(2, 3), setOf(4)), calls)
+        assertEquals("track 2", cache.state.value.cues[2]!!.single().text)
+        assertTrue(cache.state.value.isLoading)
+        finish.complete(Unit)
+        runCurrent()
+        assertEquals("track 4", cache.state.value.cues[4]!!.single().text)
+        cache.request(setOf(2, 3), 1000)
+        runCurrent()
+        assertEquals(2, calls.size)
+        assertEquals(setOf(2, 3), cache.state.value.cues.keys)
+        assertFalse(cache.state.value.isLoading)
+    }
+
+    @Test fun `overlapping windows preserve crossing cues without duplicates or boundary gaps`() = runTest {
+        val events = listOf(SubtitleCue(50_000, 70_000, "crossing"),
+            SubtitleCue(60_000, 60_000, "boundary"), SubtitleCue(80_000, 100_000, "later"))
+        val calls = mutableListOf<Pair<Long, Long>>()
+        val cache = EmbeddedCueCache(backgroundScope, read = { tracks, start, end, _ ->
+            calls += start to end
+            SubtitleWindow(start, end, tracks.associateWith { events.filter { it.endMs >= start && it.startMs <= end } })
+        })
+        cache.request(setOf(2, 3), 0)
+        runCurrent()
+        cache.request(setOf(2, 3), 45_000)
+        runCurrent()
+        assertEquals(listOf(0L to 60_000L, 60_000L to 90_000L), calls)
+        assertEquals(events, cache.state.value.cues[2])
+        assertEquals(events, cache.state.value.cues[3])
+        cache.request(setOf(2, 3), 75_000)
+        runCurrent()
+        assertEquals(90_000L to 120_000L, calls.last())
+        assertEquals(events, cache.state.value.cues[2])
+    }
+
+    @Test fun `incomplete progress never marks a failed range as covered`() = runTest {
+        var fail = true
+        var now = 0L
+        val calls = mutableListOf<Pair<Long, Long>>()
+        val cache = EmbeddedCueCache(backgroundScope, read = { tracks, start, end, progress ->
+            calls += start to end
+            val window = SubtitleWindow(start, end, tracks.associateWith { emptyList<SubtitleCue>() })
+            if (start == 60_000L && fail) { progress(window); throw IOException("interrupted") }
+            window
+        }, nowMs = { now })
+        cache.request(setOf(2), 0)
+        runCurrent()
+        cache.request(setOf(2), 45_000)
+        runCurrent()
+        assertNotNull(cache.state.value.error)
+        fail = false
+        now = 10_001
+        cache.request(setOf(2), 45_000)
+        runCurrent()
+        assertEquals(listOf(0L to 60_000L, 60_000L to 90_000L, 60_000L to 90_000L), calls)
+        assertNull(cache.state.value.error)
+    }
+
+    @Test fun `old ranges are evicted and release clears retained coverage`() = runTest {
+        var reads = 0
+        val cache = EmbeddedCueCache(backgroundScope, read = { tracks, start, end, _ ->
+            reads++
+            SubtitleWindow(start, end, tracks.associateWith { emptyList<SubtitleCue>() })
+        })
+        repeat(20) { cache.request(setOf(2, 3), it * 120_000L); runCurrent() }
+        cache.request(setOf(2, 3), 0)
+        runCurrent()
+        assertEquals(21, reads)
+        cache.clear()
+        assertTrue(cache.state.value.cues.isEmpty())
+        cache.request(setOf(2, 3), 0)
+        runCurrent()
+        assertEquals(22, reads)
+    }
+
+    @Test fun `oversized subtitle result displays but is not retained in the reuse cache`() = runTest {
+        var reads = 0
+        val large = cue.copy(text = "x".repeat(2_100_000))
+        val cache = EmbeddedCueCache(backgroundScope, read = { tracks, start, end, _ ->
+            reads++
+            SubtitleWindow(start, end, tracks.associateWith { listOf(large) })
+        })
+        cache.request(setOf(2), 0)
+        runCurrent()
+        assertEquals(large, cache.state.value.cues[2]!!.single())
+        cache.request(emptySet(), 0)
+        cache.request(setOf(2), 0)
+        runCurrent()
+        assertEquals(2, reads)
+    }
+
 }

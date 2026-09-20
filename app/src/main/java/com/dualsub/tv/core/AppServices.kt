@@ -1,6 +1,11 @@
 package com.dualsub.tv.core
 
 import android.content.Context
+import android.util.Log
+import kotlinx.coroutines.CoroutineName
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import com.dualsub.tv.ai.AiSubtitleGenerator
 import com.dualsub.tv.data.SettingsStore
 import com.dualsub.tv.media.LocalMediaDataSource
@@ -27,6 +32,8 @@ class AppServices(context: Context) {
     val appContext: Context = context.applicationContext
 
     val settings = SettingsStore(appContext)
+
+    internal val resourceCleanup = sharedCleanup
 
     /** SMB 连接按主机复用，浏览与播放共享。 */
     val smbPool = SmbSessionPool()
@@ -75,4 +82,15 @@ class AppServices(context: Context) {
     }
 
     val aiSubtitleGenerator = AiSubtitleGenerator(appContext, mediaSources)
+
+    private companion object {
+        // Process lifetime, shared even if AppRoot/AppServices is recreated. It must outlive
+        // cancelled players. Limit blocking cleanup workers; never invalidate the shared SMB pool.
+        val cleanupScope = CoroutineScope(
+            SupervisorJob() + Dispatchers.IO.limitedParallelism(2) + CoroutineName("ResourceCleanup")
+        )
+        val sharedCleanup = ResourceCleanup(cleanupScope) { message, error ->
+            Log.w("DualSubTV", message, error)
+        }
+    }
 }

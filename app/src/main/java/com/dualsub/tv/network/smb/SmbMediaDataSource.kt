@@ -1,6 +1,7 @@
 package com.dualsub.tv.network.smb
 
 import android.media.MediaDataSource
+import android.util.Log
 import com.dualsub.tv.network.RemoteLocation
 import com.hierynomus.smbj.share.File
 import kotlinx.coroutines.runBlocking
@@ -144,7 +145,7 @@ class SmbMediaDataSource(
             // 共享句柄失效（SMB 重连 / 池被 invalidate）后，缓存里的 File 就不再可用 ——
             // 这正是真机上「打开文件失败：DiskShare has already been closed」的来源。
             // 丢掉句柄重新打开一次再试，避免一次重连就把整条字幕读取链报废。
-            close()
+            discardFailedHandle(error)
             readAtOnce(position, buffer, offset, length)
         }
     }
@@ -188,17 +189,27 @@ class SmbMediaDataSource(
             handle()
             size
         } catch (error: Throwable) {
-            close()
+            discardFailedHandle(error)
             handle()
             size
         }
     }
 
+    private fun discardFailedHandle(cause: Throwable) {
+        try { close() } catch (cleanup: Exception) {
+            cause.addSuppressed(cleanup)
+            Log.w("DualSubTV", "关闭失效的 SMB 文件句柄失败", cleanup)
+        }
+    }
+
     override fun close() {
-        runCatching { file?.close() }
+        // Release local references even when the remote close fails or is interrupted.
+        // Propagate that failure to the cleanup owner instead of silently swallowing it.
+        val opened = file
         file = null
         blocks.clear()
         cachedBytes = 0
         nextSequentialBlock = -1
+        opened?.close()
     }
 }

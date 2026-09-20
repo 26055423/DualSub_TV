@@ -232,6 +232,7 @@ class PlayerViewModel(
     private var tracksReady = false
     private var trackListJob: Job? = null
     private val subtitleIo = Mutex()
+    private val subtitleSession = EmbeddedSubtitleReader.Session(appContext, ::openVideoDataSource)
 
     /** Both subtitle slots share cancellable, bounded reads with progressive delivery. */
     private val subtitleScope = CoroutineScope(
@@ -241,7 +242,7 @@ class PlayerViewModel(
         withTimeout(20_000) {
             withContext(Dispatchers.IO) {
                 subtitleIo.withLock {
-                    val window = EmbeddedSubtitleReader.readWindow(appContext, ::openVideoDataSource, tracks, start, end, progress)
+                    val window = subtitleSession.readWindow(tracks, start, end, progress)
                     Log.i(TAG, "字幕窗口 ${start / 1000}-${end / 1000}s，轨=$tracks，" +
                         "读取 ${window.bytesRead / 1024} KiB，${window.cues.values.sumOf { it.size }} 条")
                     window
@@ -497,6 +498,9 @@ class PlayerViewModel(
         errorCheckJob?.cancel()
         errorCheckJob = null
         subtitleScope.cancel()
+        embeddedCues.clear()
+        // Process-owned cleanup waits for reads before attempting an interruptible close.
+        services.resourceCleanup.closeAfterReads("字幕会话", subtitleIo, subtitleSession::close)
         controller.release()
     }
 

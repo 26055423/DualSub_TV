@@ -33,16 +33,18 @@ internal data class SubtitleWindow(
 /** One bounded, indexed pass for both subtitle slots. No video/audio payload is downloaded. */
 internal class SparseMatroskaReader private constructor(
     private val input: RandomAccessExtractorInput,
-    private val selected: Set<Int>,
+    private var selected: Set<Int>,
     private val listOnly: Boolean,
-    private val startMs: Long,
-    private val endMs: Long,
-    private val onProgress: (SubtitleWindow) -> Unit = {}
+    private var startMs: Long,
+    private var endMs: Long,
+    private var onProgress: (SubtitleWindow) -> Unit = {}
 ) {
     private val tracks = linkedMapOf<Int, Sink>()
     private var seekMap: SeekMap? = null
     private var lastProgressNs = 0L
     private var deliveredCount = 0
+    private var prepared = false
+    private var indexOverflow = false
     private var preparing = true
     private var timeScaleNs = 1_000_000L
     private val position = PositionHolder()
@@ -99,8 +101,14 @@ internal class SparseMatroskaReader private constructor(
         override fun endMasterElement(id: Int) {
             if (id == 0xA0 && ignoredGroup) { ignoredGroup = false; return }
             super.endMasterElement(id)
-            if (id == 0xB7 && tracks[cueTrack]?.index in selected) {
-                subtitleIndex += IndexedCue(cueTrack, cueTime, cueCluster, cueRelative, cueDuration)
+            if (id == 0xB7 && preparing && !indexOverflow &&
+                tracks[cueTrack]?.let { it.type == C.TRACK_TYPE_TEXT && !it.isBitmap } == true) {
+                // Cache metadata for every text track so a track switch need not reread Cues.
+                // Pathological indexes fall back to the existing bounded seek-map reader.
+                if (subtitleIndex.size >= 200_000) {
+                    subtitleIndex.clear()
+                    indexOverflow = true
+                } else subtitleIndex += IndexedCue(cueTrack, cueTime, cueCluster, cueRelative, cueDuration)
             }
             if (id == 0xA0 && indexedBlock) throw Boundary()
             if (id == 0x1654AE6B && listOnly) throw Boundary()
@@ -135,7 +143,7 @@ internal class SparseMatroskaReader private constructor(
     init {
         extractor.init(object : ExtractorOutput {
             override fun track(id: Int, type: Int): TrackOutput =
-                tracks.getOrPut(id) { Sink(tracks.size) }
+                tracks.getOrPut(id) { Sink(tracks.size, type) }
             override fun endTracks() = Unit
             override fun seekMap(map: SeekMap) { seekMap = map }
         })
@@ -160,7 +168,9 @@ internal class SparseMatroskaReader private constructor(
     }
 
     private fun prepare() {
+        if (prepared) return
         try { pump() } catch (_: Boundary) { /* tracks, then index up to the first cluster */ }
+        prepared = true
     }
 
     private fun trackInfos(): List<EmbeddedSubtitleReader.TrackInfo> = tracks.values.mapNotNull { sink ->
@@ -196,6 +206,7 @@ internal class SparseMatroskaReader private constructor(
     }
 
     private fun canReadIndexed(): Boolean {
+        if (indexOverflow) return false
         val textTracks = tracks.filterValues { it.index in selected && !it.isBitmap }.keys
         return textTracks.all { id ->
             val entries = subtitleIndex.filter { it.track == id }
@@ -245,7 +256,8 @@ internal class SparseMatroskaReader private constructor(
         val entries = subtitleIndex.filter {
             val timeMs = it.timeTicks * timeScaleNs / 1_000_000
             val end = it.durationTicks?.let { duration -> timeMs + duration * timeScaleNs / 1_000_000 }
-            timeMs <= endMs && (end == null || end >= startMs) && tracks[it.track]?.isBitmap != true
+            timeMs <= endMs && (end == null || end >= startMs) &&
+                tracks[it.track]?.let { sink -> sink.index in selected && !sink.isBitmap } == true
         }.sortedBy { it.timeTicks }
         for (cue in entries) {
             val (payload, ticks) = clusters.getOrPut(cue.cluster) { clusterInfo(segmentStart + cue.cluster) }
@@ -269,14 +281,15 @@ internal class SparseMatroskaReader private constructor(
                 sink.index to sink.cues.filter { it.endMs >= startMs && it.startMs <= endMs }.sortedAndDistinct()
             }, input.bytesRead, usesSubtitleIndex)
 
-    private inner class Sink(val index: Int) : TrackOutput {
+    private inner class Sink(val index: Int, val type: Int) : TrackOutput {
         var format: Format? = null
         val isBitmap: Boolean get() = SubtitleFormat.isBitmapMime(
             if (format?.sampleMimeType == SubtitleFormat.MIME_MEDIA3_CUES) format?.codecs else format?.sampleMimeType
         )
         private var ass: EmbeddedAssParser? = null
-        private val bytes = ByteArrayOutputStream()
+        private var bytes = ByteArrayOutputStream()
         val cues = ArrayList<SubtitleCue>()
+        fun resetWindow() { cues.clear(); bytes = ByteArrayOutputStream() }
         override fun format(format: Format) {
             this.format = format
             if (SubtitleFormat.fromMimeType(format.sampleMimeType) == SubtitleFormat.ASS) {
@@ -320,7 +333,39 @@ internal class SparseMatroskaReader private constructor(
         }
     }
 
+    /** Caller serializes operations and closes after the last operation exits. */
+    suspend fun readNext(tracks: Set<Int>, start: Long, end: Long,
+        progress: (SubtitleWindow) -> Unit = {}): SubtitleWindow {
+        require(start >= 0 && end > start)
+        val coroutine = currentCoroutineContext()
+        input.beginRead { coroutine.ensureActive() }
+        selected = tracks.toSet()
+        startMs = start
+        endMs = end
+        onProgress = progress
+        usesSubtitleIndex = false
+        deliveredCount = 0
+        lastProgressNs = 0
+        this.tracks.values.forEach { it.resetWindow() }
+        try { return window() } finally {
+            onProgress = {}
+            input.endRead()
+            this.tracks.values.forEach { it.resetWindow() }
+        }
+    }
+
+    fun close() {
+        extractor.release()
+        subtitleIndex.clear()
+        tracks.clear()
+        onProgress = {}
+        input.endRead()
+    }
+
     companion object {
+        fun open(source: MediaDataSource): SparseMatroskaReader =
+            SparseMatroskaReader(RandomAccessExtractorInput(source, {}), emptySet(), false, 0, 0)
+
         suspend fun listTracks(source: MediaDataSource): List<EmbeddedSubtitleReader.TrackInfo> {
             val coroutine = currentCoroutineContext()
             val reader = SparseMatroskaReader(RandomAccessExtractorInput(source, { coroutine.ensureActive() }),
