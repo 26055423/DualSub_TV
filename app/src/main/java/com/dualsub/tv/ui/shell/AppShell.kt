@@ -9,7 +9,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -44,7 +43,7 @@ import com.dualsub.tv.ui.theme.BeiMotion
 import androidx.compose.ui.text.font.FontWeight
 
 /**
- * 应用外壳的导航目的地。**枚举顺序就是导航栏从上到下的顺序。**
+ * 应用外壳的导航目的地。**枚举顺序就是顶部标签从左到右的顺序。**
  *
  * 关于「为什么没有独立的『媒体流』项」：DLNA 媒体服务器**已经在「网络」页里**
  * （`NetworkScreen` 负责 SSDP 发现与浏览，见 `DlnaBrowser`）。把它提成一级会与
@@ -53,6 +52,10 @@ import androidx.compose.ui.text.font.FontWeight
  * **AI 字幕不单列一级**：它的「用」（生成 / 实时翻译）在**播放页菜单的字幕二级**里，
  * 「配」（API Key / 模型）在**「设置 → AI 字幕」**里 —— 两边都是用户真正会用到的时机。
  * 早先它占过一个一级导航项，结果是既挤占导航、又和播放时的操作路径脱节。
+ *
+ * [subtitle] 现在**不显示在顶部标签上**（横向标签放两行字会太高、也挤），
+ * 保留在枚举里是为了"这个目的地是干什么的"有一处权威描述；各页自己的
+ * `BeiPageHeader` 副标题才是用户看得见的那一份。
  */
 enum class ShellTab(val label: String, val subtitle: String) {
     Local("本地", "本机媒体库"),
@@ -61,21 +64,27 @@ enum class ShellTab(val label: String, val subtitle: String) {
 }
 
 /**
- * 应用级外壳：**左侧竖向导航 + 右侧内容区**，底下一层夜景光斑。
+ * 应用级外壳：**顶部横向标签 + 下方内容区**，底下一层夜景光斑。
  *
- * 为什么要有这层：原先 `AppRoot` 是「一个页面占满全屏」的手写状态机，每个页面各自
- * 画标题栏、各自处理返回。观感上应当是**导航常驻、内容区切换**，所以把导航提到
- * 外壳这一层，各页面只负责画自己的内容。
+ * ## 为什么从「左侧竖向导航」改成「顶部横向标签」
  *
- * 导航不覆盖播放页 —— 播放时整屏交给 `PlayerScreen`（那是沉浸式场景，左侧挂一条
- * 导航栏只会碍事）。所以播放页**不走这个外壳**，由 `AppRoot` 直接渲染。
+ * 竖向导航是照搬手机/桌面的做法，而电视的遥控器**只有方向键**：左右是最自然的移动方向
+ * （页面内容本身也是横向排布），把导航放在侧面等于要求用户频繁做"横向的左右"和
+ * "纵向的上下"两种不同性质的移动。改成顶部标签之后：
+ *
+ * - 内容区拿到**整屏宽度**，横向行能多放下一两张卡；
+ * - 「我在哪一页」用一排常驻标签回答，不再占用一块纵向空间；
+ * - 移动语义统一成"上下换层级、左右换内容"。
+ *
+ * 导航不覆盖播放页 —— 播放时整屏交给 `PlayerScreen`（那是沉浸式场景，顶栏同样碍事）。
+ * 所以播放页**不走这个外壳**，由 `AppRoot` 直接渲染。
  *
  * ## 视觉（`docs/UI_STYLE_REFERENCE.md`）
  *
  * 深墨夜景底（[BeiGlass.Night]）+ 两三处 `radialGradient` 柔光斑（**不做实时模糊** ——
- * MTK 电视 SoC 上逐帧模糊直接掉帧）+ **无色玻璃**导航项 + **唯一**强调色香槟金。
+ * MTK 电视 SoC 上逐帧模糊直接掉帧）+ **无色玻璃**标签 + **唯一**强调色香槟金。
  *
- * 这里刻意**没有**实色导航底板：导航与内容同在夜景底上，只用一条 1dp 白 15%
+ * 这里刻意**没有**实色顶栏底板：标签与内容同在夜景底上，只用一条 1dp 白 15%
  * 的分隔线划界（早先是纯白面板 —— 那是浅色外壳的做法，新风格下不成立）。
  */
 @Composable
@@ -87,9 +96,10 @@ fun AppShell(
     Box(modifier = Modifier.fillMaxSize().background(BeiGlass.Night)) {
         BeiGlowBackground()
 
-        Row(modifier = Modifier.fillMaxSize()) {
-            BeiNavRail(current = current, onSelect = onSelect)
-            Box(modifier = Modifier.weight(1f).fillMaxHeight()) {
+        Column(modifier = Modifier.fillMaxSize()) {
+            BeiTopBar(current = current, onSelect = onSelect)
+
+            Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
                 // 内容区四周留白交给具体页面（它们比外壳更清楚自己要多宽），
                 // 这里只给一个统一的电视安全边距基准（40 / 28dp，避免过扫描切掉内容）。
                 content(
@@ -145,76 +155,74 @@ private fun BeiGlowBackground() {
 }
 
 /**
- * 左侧竖向导航。
+ * 顶部横向标签栏：品牌标记 + 三个目的地标签，底部一条 1dp 分隔线划出边界。
  *
- * 焦点与选中是**两个不同的概念**，别混：遥控器焦点会到处跑（用户可能正要去别处），
- * 而「选中」是当前真正在看的页面。两者**用不同的视觉语言**表达，别再让它们撞色：
- *
- * - **焦点**：香槟 15% 底 + **2dp 香槟描边** + 微放大 —— 焦点是唯一的"位置指示"，
- *   必须一眼看得出来（电视上没有鼠标指针可看）；
- * - **选中**：香槟 15% 底 + **左侧香槟短条**，**没有描边**。
- *
- * ⚠️ 这两者曾经**都套香槟描边**（简约化时把焦点描边色也改成了 `Accent`），于是焦点上下
- * 移动时看起来"边框在跳、颜色没变"。**描边现在只属于焦点**，这是两者唯一的区分依据 ——
- * 将来谁想给选中也加边框，先回来看这段。
+ * 焦点态与旧的竖向导航**同源**（都只看 `focused`），只是形状从"竖条 + 左竖线"变成
+ * "横向胶囊" —— 横向排布里左侧竖线没有意义，所以**去掉了竖线**，
+ * 焦点只靠「香槟 15% 底 + 2dp 香槟描边 + 微放大」三件套表达。
+ * 「当前在哪一页」仍然是**亮香槟文字 + 加粗**，与焦点互不冲突（见 `UI_STYLE_REFERENCE.md` §2.4）。
  */
 @Composable
-private fun BeiNavRail(
+private fun BeiTopBar(
     current: ShellTab,
     onSelect: (ShellTab) -> Unit
 ) {
-    Column(
+    Row(
         modifier = Modifier
-            .width(228.dp)
-            .fillMaxHeight()
-            // 只用一条 1dp 白 15% 的分隔线划出导航边界，不铺实色底板。
+            .fillMaxWidth()
             .drawBehind {
-                val x = size.width - 0.5.dp.toPx()
+                // 只用一条 1dp 白 15% 的分隔线划出顶栏边界，不铺实色底板。
+                val y = size.height - 0.5.dp.toPx()
                 drawLine(
                     color = BeiGlass.Border,
-                    start = Offset(x, 0f),
-                    end = Offset(x, size.height),
+                    start = Offset(0f, y),
+                    end = Offset(size.width, y),
                     strokeWidth = 1.dp.toPx()
                 )
             }
-            .padding(horizontal = 16.dp, vertical = BeiDims.ScreenVertical),
-        verticalArrangement = Arrangement.spacedBy(8.dp)
+            .padding(horizontal = BeiDims.ScreenStart, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically
     ) {
         BrandMark()
+        Spacer(modifier = Modifier.width(18.dp))
 
         ShellTab.entries.forEach { tab ->
-            NavItem(
+            TopTabItem(
                 tab = tab,
                 selected = tab == current,
                 onClick = { onSelect(tab) }
             )
+            Spacer(modifier = Modifier.width(8.dp))
         }
     }
 }
 
 /**
- * 左上角品牌标记：香槟金玻璃方块 + 播放符号。
+ * 左上角品牌标记：香槟金玻璃方块 + 播放符号 + 产品名。
  *
  * 早先这里是**靛蓝→紫的线性渐变方块** —— 新规范明确禁止多种强调色、也禁止
  * AI 紫粉渐变，所以改成"香槟 15% 填充 + 香槟 40% 描边"的玻璃块。
+ *
+ * 从竖向导航搬到顶栏后**变紧凑了**：去掉了下方的间距，图标也从 30dp 收到 26dp ——
+ * 顶栏是常驻的，它比内容区更该让位。
  */
 @Composable
 private fun BrandMark() {
-    val shape = RoundedCornerShape(9.dp)
+    val shape = RoundedCornerShape(8.dp)
     Row(
-        modifier = Modifier.padding(start = 8.dp, bottom = 22.dp),
+        modifier = Modifier.padding(end = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp)
+        horizontalArrangement = Arrangement.spacedBy(9.dp)
     ) {
         Box(
             modifier = Modifier
-                .size(30.dp)
+                .size(26.dp)
                 .clip(shape)
                 .background(BeiGlass.AccentFill)
                 .border(BeiDims.Border, BeiGlass.AccentBorder, shape),
             contentAlignment = Alignment.Center
         ) {
-            Canvas(modifier = Modifier.size(13.dp)) {
+            Canvas(modifier = Modifier.size(11.dp)) {
                 drawPath(
                     path = Path().apply {
                         moveTo(0f, 0f)
@@ -229,17 +237,22 @@ private fun BrandMark() {
         Text(
             text = "DualSub TV",
             color = BeiGlass.TextPrimary,
-            fontSize = 18.sp,
+            fontSize = 16.sp,
             fontWeight = FontWeight.Bold
         )
     }
 }
 
 /**
- * 一个导航项。
+ * 一个顶部标签。
  *
  * 焦点态按规范做**三件套**（底色 + 描边 + 微放大）—— 电视上「焦点」是唯一的位置
- * 指示，用户没有鼠标指针可看，所以列表 / 网格里的高亮项必须足够明显。
+ * 指示，用户没有鼠标指针可看，所以高亮必须足够明显。
+ *
+ * ⚠️ **只允许存在一块高亮，它跟焦点走**：底色、描边**全部只看 `focused`**，
+ * 绝不能写成 `if (focused || selected)`，否则「当前页」那块底会赖着不走 ——
+ * 竖向导航时代连着踩过两次，真机表现是"背景先动、原来那块和 | 线没跟着动"。
+ * 「当前在哪一页」只用**文字色（亮香槟）+ 加粗**表达。
  *
  * 描边为什么画在 [Surface] 的 content 里、而不是用 tv-material3 的 `border` 参数：
  * 后者的类型是它自家的 `androidx.tv.material3.Border`（不是 foundation 的
@@ -248,7 +261,7 @@ private fun BrandMark() {
  */
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-private fun NavItem(
+private fun TopTabItem(
     tab: ShellTab,
     selected: Boolean,
     onClick: () -> Unit
@@ -260,15 +273,11 @@ private fun NavItem(
         selected || focused -> BeiGlass.AccentBright
         else -> BeiGlass.TextSecondary
     }
-    val subtitleColor = when {
-        selected || focused -> BeiGlass.AccentBright.copy(alpha = 0.70f)
-        else -> BeiGlass.TextMuted
-    }
 
     Surface(
         onClick = onClick,
         shape = ClickableSurfaceDefaults.shape(shape = shape),
-        // ⚠️ 容器色**全部留透明**，背景改由 content 里那一层自绘 —— 原因见下方注释。
+        // ⚠️ 容器色**全部留透明**，背景改由 content 里那一层自绘 —— 原因见上方注释。
         colors = ClickableSurfaceDefaults.colors(
             containerColor = Color.Transparent,
             contentColor = labelColor,
@@ -278,22 +287,10 @@ private fun NavItem(
             pressedContentColor = labelColor
         ),
         scale = ClickableSurfaceDefaults.scale(focusedScale = BeiMotion.FOCUS_SCALE),
-        modifier = Modifier
-            .fillMaxWidth()
-            .onFocusChanged { focused = it.isFocused }
+        modifier = Modifier.onFocusChanged { focused = it.isFocused }
     ) {
         Box {
-            // ---- 背景层：**只由 `focused` 驱动**
-            //
-            // 这里连着踩过两次坑，根因是同一个 —— **高亮的来源不一致**：
-            // 1. 起初底色走 `Surface` 的 `focusedContainerColor`，它与真实焦点不同步，
-            //    焦点走了旧项不撤；
-            // 2. 改成自绘之后底色对了，却又写成 `if (focused || selected)` ——
-            //    于是"选中"那一项也占一块底色，焦点移开后它**赖着不走**
-            //    （真机表现："背景先动，但原来的背景和 | 线没跟着动，按了 OK 才移动过去"）。
-            //
-            // 结论：**导航栏里只允许存在一块高亮，它跟焦点走**。
-            // 「当前在哪一页」不再用底色表达，改用**文字色（亮香槟）+ 加粗**。
+            // 背景层：**只由 `focused` 驱动**
             Box(
                 modifier = Modifier
                     .matchParentSize()
@@ -302,43 +299,23 @@ private fun NavItem(
 
             Row(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .height(64.dp)
-                    .padding(horizontal = 12.dp),
-                verticalAlignment = Alignment.CenterVertically
+                    .height(44.dp)
+                    .padding(horizontal = 14.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(9.dp)
             ) {
-                // 焦点指示条：同样**只跟焦点**（早年它跟的是"选中"，所以按上下键它不动）
-                Box(
-                    modifier = Modifier
-                        .width(3.dp)
-                        .height(if (focused) 28.dp else 0.dp)
-                        .clip(RoundedCornerShape(2.dp))
-                        .background(BeiGlass.Accent)
-                )
-                Spacer(modifier = Modifier.width(11.dp))
-
                 TabGlyph(tab = tab, tint = labelColor)
 
-                Spacer(modifier = Modifier.width(14.dp))
-
-                Column {
-                    Text(
-                        text = tab.label,
-                        color = labelColor,
-                        fontSize = 17.sp,
-                        // 加粗 = "当前就在这一页"，这是"选中"唯一保留的表达
-                        fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal
-                    )
-                    Text(
-                        text = tab.subtitle,
-                        color = subtitleColor,
-                        fontSize = BeiDims.TinySize
-                    )
-                }
+                Text(
+                    text = tab.label,
+                    color = labelColor,
+                    fontSize = 16.sp,
+                    // 加粗 = "当前就在这一页"，这是"选中"唯一保留的表达
+                    fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal
+                )
             }
 
-            // 描边叠层：**只有焦点画边框**（2dp 香槟）。
-            // 与底色、竖线**同源**（都看 `focused`），所以三者永远一起动。
+            // 描边叠层：**只有焦点画边框**（2dp 香槟），与底色同源。
             Box(
                 modifier = Modifier
                     .matchParentSize()
@@ -353,9 +330,9 @@ private fun NavItem(
 }
 
 /**
- * 导航项的小图标 —— 自绘，不引图标库。
+ * 标签的小图标 —— 自绘，不引图标库。
  *
- * 之所以不引 `material-icons`：本项目依赖里没有它，为一个导航栏引入整套图标包不划算，
+ * 之所以不引 `material-icons`：本项目依赖里没有它，为一个顶栏引入整套图标包不划算，
  * 而且不同电视对 emoji 的渲染差异很大（可能显示成方框 —— 我们刚在字幕上吃过这个亏）。
  * 这几个图形都是简单几何，画出来在所有设备上都一样。
  */

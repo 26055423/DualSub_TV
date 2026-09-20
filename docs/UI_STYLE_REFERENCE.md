@@ -139,8 +139,8 @@
 
 | 落地常量 | 值 | 用途 |
 |---|---|---|
-| `BeiDims.IconSourceCard` | **56dp**（圆角 ≈ 28% 边长） | 来源 / 功能大图标卡（`SourceIcon`） |
-| `BeiDims.IconNav` | **22dp** | 导航栏图标（`AppShell.TabGlyph`） |
+| `BeiDims.IconSourceCard` | **44dp**（圆角 ≈ 28% 边长） | 来源 / 功能大图标卡（`SourceIcon`）。**2026-09-20 由 56dp 收到 44dp** —— 网络主页改成 5 个入口后要一屏放下它们 + 一行「已保存」，56dp 会把卡片顶得太高 |
+| `BeiDims.IconNav` | **22dp** | 顶部标签图标（`AppShell.TabGlyph`） |
 | `BeiDims.IconStatus` | **18dp** | 状态 / 提示图标（`RemoteBrowseScreen.EntryGlyph` 的目录/文件标记） |
 | `BeiDims.MinTouchTarget` | **48dp** | 最小可点区域（如设置页色点：视觉 30dp + 48dp 焦点框） |
 
@@ -346,11 +346,14 @@
 | 落地物 | 位置 |
 |---|---|
 | 配色 / 尺寸 / 动效的**唯一来源** | `ui/theme/BeiGlass.kt`（`BeiGlass` / `BeiDims` / `BeiMotion`） |
-| 外壳骨架：夜景观底 + 光斑 + 玻璃导航 + 品牌块 | `ui/shell/AppShell.kt` |
+| 外壳骨架：夜空观底 + 光斑 + **顶部横向标签** + 品牌块 | `ui/shell/AppShell.kt` |
 | 基础件：页面标题 / 玻璃卡 / 大图标卡 / 静态卡 / 胶囊按钮 / 选项胶囊 / 来源图标 | `ui/shell/BeiUi.kt` |
-| 媒体库（16:9 封面用 `Night → Ink` 渐变 + 香槟播放符号） | `ui/library/LibraryScreen.kt` |
-| 网络位置（**6 张**大图标卡，3 列 × 2 行） | `ui/network/NetworkScreen.kt` |
-| 「本地网络」子页（进入即扫描 + 「＋ 手动配置」+ 已保存入口） | `ui/network/LocalNetworkScreen.kt` |
+| 表单输入框（玻璃底 + 香槟光标，拉到焦点时拉起软键盘） | `ui/shell/BeiTextField.kt` |
+| 媒体库（**横向行、按文件夹分组**；16:9 封面用 `Night → Ink` 渐变） | `ui/library/LibraryScreen.kt` |
+| 网络位置（**5 个一级入口**：本地网络 / 云盘 / NAS / WebDAV / DLNA） | `ui/network/NetworkScreen.kt`、`ui/network/NetworkRows.kt` |
+| 「本地网络」子页（进入即扫描 + 「＋ 手动配置」） | `ui/network/LocalNetworkScreen.kt` |
+| 「云盘」子页（夸克 / 百度 / 阿里） | `ui/network/CloudDriveScreen.kt` |
+| 「NAS」子页 + 按品牌接入的表单（飞牛 / 群晖 / 威联通 / 绿联） | `ui/network/NasVendorScreen.kt`、`ui/network/NasServerForm.kt` |
 | 目录浏览 + SMB 表单（自绘 `EntryGlyph` 替代 emoji） | `ui/network/RemoteBrowseScreen.kt` |
 | WebDAV 表单（玻璃输入框 + 香槟光标） | `ui/network/WebDavServerForm.kt` |
 | 夸克 / 百度 / 阿里扫码登录（夜景底 + 玻璃面板 + `QrSurface` 二维码白底） | `ui/network/{Quark,Baidu,Ali}LoginScreen.kt` |

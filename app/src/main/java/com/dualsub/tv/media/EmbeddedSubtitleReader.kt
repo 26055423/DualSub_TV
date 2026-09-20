@@ -3,6 +3,7 @@ package com.dualsub.tv.media
 import android.content.Context
 import android.media.MediaDataSource
 import android.media.MediaFormat
+import android.util.Log
 import androidx.media3.common.C
 import androidx.media3.common.Format
 import androidx.media3.datasource.DefaultDataSource
@@ -60,7 +61,7 @@ object EmbeddedSubtitleReader {
     }
 
     suspend fun listTracks(context: Context, sourceFactory: () -> MediaDataSource): List<TrackInfo> {
-        sourceFactory().use { source ->
+        sourceFactory().useReadResult({ Log.w("DualSubTV", "关闭字幕读取源失败（保留已读结果）", it) }) { source ->
             if (isMatroska(source)) return SparseMatroskaReader.listTracks(source)
         }
         return listTracksCompat(context, sourceFactory)
@@ -72,7 +73,7 @@ object EmbeddedSubtitleReader {
         onProgress: (SubtitleWindow) -> Unit = {}
     ): SubtitleWindow {
         require(startMs >= 0 && endMs > startMs)
-        sourceFactory().use { source ->
+        sourceFactory().useReadResult({ Log.w("DualSubTV", "关闭字幕读取源失败（保留已读结果）", it) }) { source ->
             if (isMatroska(source)) return SparseMatroskaReader.readWindow(source, tracks, startMs, endMs, onProgress)
         }
         // Other supported containers retain the Media3 path, but never scan to EOF.
@@ -266,7 +267,7 @@ object EmbeddedSubtitleReader {
             return result
         } finally {
             runCatching { extractor.release() }
-            runCatching { source?.close() }
+            runCatching { source?.close() }.onFailure { Log.w("DualSubTV", "关闭字幕读取源失败", it) }
         }
     }
 }

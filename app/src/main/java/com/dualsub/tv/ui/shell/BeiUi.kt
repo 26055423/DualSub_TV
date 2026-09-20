@@ -372,7 +372,7 @@ fun BeiChoiceRow(
 }
 
 /** 网络页的几类来源，用来选图标。 */
-enum class SourceKind { Smb, WebDav, Dlna, Quark, Baidu, Ali, Scan }
+enum class SourceKind { Smb, Nas, CloudDrive, WebDav, Dlna, Quark, Baidu, Ali, Scan }
 
 /**
  * 来源图标：**玻璃圆角方块 + 香槟金符号**。
@@ -410,6 +410,43 @@ fun SourceIcon(kind: SourceKind, modifier: Modifier = Modifier, size: Dp = BeiDi
             // 否则同一排卡片里有的"显大"有的"显小"（真机反馈过：WebDAV 的云偏小、
             // 网盘的实心圆偏大）。描边粗细也统一走同一个 `stroke`。
             when (kind) {
+                // 云 + 中心实心点：云盘（夸克 / 百度 / 阿里）。与 WebDAV 的纯云形只差中间
+                // 那一点 —— 两者的区别正是「云上有他的一份内容」vs「一条连到某台机器的协议」。
+                SourceKind.CloudDrive -> {
+                    drawCircle(
+                        color = ink, radius = w * 0.22f,
+                        center = Offset(w * 0.30f, h * 0.58f), style = Stroke(stroke)
+                    )
+                    drawCircle(
+                        color = ink, radius = w * 0.28f,
+                        center = Offset(w * 0.52f, h * 0.46f), style = Stroke(stroke)
+                    )
+                    drawCircle(
+                        color = ink, radius = w * 0.20f,
+                        center = Offset(w * 0.74f, h * 0.58f), style = Stroke(stroke)
+                    )
+                    drawLine(ink, Offset(w * 0.22f, h * 0.74f), Offset(w * 0.82f, h * 0.74f), stroke)
+                    drawCircle(ink, radius = w * 0.09f, center = Offset(w * 0.52f, h * 0.50f))
+                }
+                // 上下两块盘位：NAS（飞牛 / 群晖 / 威联通 / 绿联 共用这一个）。
+                // 刻意做成"双格箱体"而不是再画一台屏幕 —— SMB 那张卡就是"屏幕 + 底座"，
+                // 两者在同一页挨着，形状必须一眼分得开。
+                SourceKind.Nas -> {
+                    drawRoundRect(
+                        color = ink,
+                        topLeft = Offset(w * 0.16f, h * 0.16f),
+                        size = Size(w * 0.68f, h * 0.30f),
+                        cornerRadius = CornerRadius(w * 0.08f),
+                        style = Stroke(width = stroke)
+                    )
+                    drawRoundRect(
+                        color = ink,
+                        topLeft = Offset(w * 0.16f, h * 0.54f),
+                        size = Size(w * 0.68f, h * 0.30f),
+                        cornerRadius = CornerRadius(w * 0.08f),
+                        style = Stroke(width = stroke)
+                    )
+                }
                 // 显示器 + 底座：局域网里的一台机器
                 SourceKind.Smb -> {
                     drawRoundRect(

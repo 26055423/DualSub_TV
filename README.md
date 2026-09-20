@@ -9,7 +9,7 @@
 > 界面风格：**深墨夜景 + 无色玻璃 + 单一香槟金强调色**。
 > 完整规范（配色 token / 尺寸档位 / 焦点态 / 覆盖层与返回键层序）见
 > [`docs/UI_STYLE_REFERENCE.md`](docs/UI_STYLE_REFERENCE.md)；
-> 代码结构与设计取舍见 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)。
+> 代码结构与设计取舍见 [`ARCHITECTURE.md`](ARCHITECTURE.md)。
 
 ---
 
@@ -21,14 +21,16 @@
 - Android 13+ 使用 `READ_MEDIA_VIDEO`，旧版本回落 `READ_EXTERNAL_STORAGE`
 - 支持从文件管理器「用 DualSub TV 打开」直接进播放页（`ACTION_VIEW` + `video/*`）
 
-**网络位置**
+**网络位置**（五个入口：本地网络 / 云盘 / NAS / WebDAV / DLNA）
 
-- **本地网络**（首页那张卡）：**进去就自动扫描**同一网段里开放 445 端口的设备，
+- **本地网络**：**进去就自动扫描**同一网段里开放 445 端口的设备，
   扫到的设备点一下即可填账号接入；右上角有「**＋ 手动配置**」留给已知地址的手填场景
 - **列出共享**：填好账号后直接向服务器要共享清单，点选即可 —— **不需要事先知道共享名**
+- **云盘**：夸克 / 百度 / 阿里云盘（扫码登录）
+- **NAS**：按品牌接入 —— **飞牛 / 群晖 / 威联通 / 绿联**。各家默认端口已预填并自动探测，
+  只填地址 / 账号 / 密码；表单上直接印着该家「去哪儿开 WebDAV」和它特有的坑
+- **WebDAV**：AList / Nextcloud / Nginx 等通用 WebDAV 服务
 - **DLNA / UPnP**：一键扫描局域网内的媒体服务器，浏览并播放
-- **WebDAV**：支持 AList / Nextcloud / Nginx 等
-- **云网盘**：夸克 / 百度 / 阿里云盘（扫码登录）
 - 已添加的服务器可**编辑**（改 IP、改密码、换共享）与删除
 
 **播放器**
@@ -177,6 +179,14 @@ adb install -r app\build\outputs\apk\debug\app-debug.apk
 
 如果 NAS 开的是 DLNA 而不是 SMB，点「DLNA」卡扫描，保存后直接进入。
 
+**如果是飞牛 / 群晖 / 威联通 / 绿联这类家用 NAS**：点「**NAS**」→ 选你的品牌，
+只填地址 / 账号 / 密码即可 —— 各家默认端口已经预填，探测会自动校正；
+表单上还直接写着该家「去哪儿开 WebDAV」和它特有的坑。两个常见前提：
+
+1. WebDAV 服务**默认是关的**，要先在后台打开（表单上有具体路径）；
+2. 进去后看不到文件夹时，检查共享文件夹上「允许通过文件共享协议挂载」之类的开关
+   （飞牛和群晖都有这一项）。
+
 ---
 
 ## 播放页操作
@@ -248,7 +258,7 @@ adb install -r app\build\outputs\apk\debug\app-debug.apk
 | 文档 | 内容 |
 |---|---|
 | [`docs/UI_STYLE_REFERENCE.md`](docs/UI_STYLE_REFERENCE.md) | 视觉规范：配色 token、尺寸档位、焦点态规则、覆盖层与返回键层序、自检清单 |
-| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | 架构：模块结构、核心决策、数据流、网络体系、字幕系统、扩展指南 |
+| [`ARCHITECTURE.md`](ARCHITECTURE.md) | 架构：模块结构、核心决策、数据流、网络体系、字幕系统、扩展指南 |
 | [`docs/HANDOVER.md`](docs/HANDOVER.md) | 交接：本轮改动、踩过的坑、构建环境问题、待办 |
 | [`DEV_SETUP.md`](DEV_SETUP.md) | 开发环境准备 |
 

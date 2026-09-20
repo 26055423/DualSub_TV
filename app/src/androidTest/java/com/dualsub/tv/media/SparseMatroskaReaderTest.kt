@@ -91,6 +91,15 @@ class SparseMatroskaReaderTest {
         assertTrue(source.readBytes < 100)
     }
 
+    @Test fun discoveredTracksSurviveRemoteCloseFailure() = runBlocking(Dispatchers.IO) {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val source = largeFixture()
+        source.closeFailure = java.io.IOException("SMB CLOSE failed after successful discovery")
+        val tracks = EmbeddedSubtitleReader.listTracks(context) { source }
+        assertEquals(listOf(1, 2), tracks.map { it.index })
+        assertTrue(source.closed)
+    }
+
     @Test fun sessionReusesIndexAcrossSeekAndTrackSwitchAndReleasesSource() = runBlocking(Dispatchers.IO) {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val source = largeFixture(withSubtitleIndex = true)
@@ -208,6 +217,7 @@ class SparseMatroskaReaderTest {
         val parts = TreeMap<Long, ByteArray>()
         var transferred = 0L
         var closed = false
+        var closeFailure: java.io.IOException? = null
         var indexRange = LongRange.EMPTY
         var indexReads = 0
         fun put(position: Long, bytes: ByteArray) { parts[position] = bytes }
@@ -225,7 +235,7 @@ class SparseMatroskaReaderTest {
             transferred += count
             return count
         }
-        override fun close() { closed = true }
+        override fun close() { closed = true; closeFailure?.let { throw it } }
     }
     private fun bytes(value: Long, size: Int) = ByteArray(size) { (value ushr (8 * (size - it - 1))).toByte() }
     private fun uint(id: Long, value: Long) = element(id, bytes(value, (1..8).first { it == 8 || value < (1L shl (8 * it)) }))

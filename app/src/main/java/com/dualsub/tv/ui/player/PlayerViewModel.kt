@@ -18,6 +18,7 @@ import com.dualsub.tv.ai.AiSubtitleState
 import com.dualsub.tv.media.EmbeddedSubtitleReader
 import com.dualsub.tv.media.VideoItem
 import com.dualsub.tv.player.SubtitleSource
+import com.dualsub.tv.player.retrySubtitleTrackRead
 import com.dualsub.tv.player.EmbeddedCueCache
 import com.dualsub.tv.player.EmbeddedCueState
 import com.dualsub.tv.player.SubtitleStyle
@@ -513,9 +514,12 @@ class PlayerViewModel(
         }
     }
 
-    /** Activity/Fragment onStart 时调用：回到前台恢复播放。 */
+    /** Activity/Fragment onStart 时调用：回到前台恢复画面与播放。 */
     fun onAppForeground() {
         if (released) return
+        // 屏保 / 息屏会销毁并重建 SurfaceView 的 surface，而 libVLC 的 vout 事后往往
+        // "假 attached" —— 音频回来了、画面还是黑的。所以**画面必须先于播放恢复**。
+        controller.restoreVideoOutput()
         if (pausedForAudioFocus) {
             pausedForAudioFocus = false
             if (!controller.isPlaying()) controller.togglePlayPause()
@@ -570,8 +574,9 @@ class PlayerViewModel(
         requestAudioFocus()
         restoreAndOpen()
         loadEmbeddedTrackList()
-        viewModelScope.launch {
-            val container = withContext(Dispatchers.IO) { sniffContainer() }
+        subtitleScope.launch {
+            // Discovery and sniffing otherwise race to initialize the same cold SMB session.
+            val container = withContext(Dispatchers.IO) { subtitleIo.withLock { sniffContainer() } }
             if (released) return@launch
             _container.value = container
             Log.i(TAG, "容器嗅探结果：${container ?: "未识别"}")
@@ -970,9 +975,14 @@ class PlayerViewModel(
         _embeddedTrackStatus.value = "正在读取轨道…"
         trackListJob = subtitleScope.launch {
             try {
-                val tracks = withTimeout(20_000) {
-                    withContext(Dispatchers.IO) {
-                        subtitleIo.withLock { EmbeddedSubtitleReader.listTracks(appContext, ::openVideoDataSource) }
+                val tracks = retrySubtitleTrackRead(onRetry = { error ->
+                    Log.w(TAG, "首次读取字幕轨失败，自动重试一次", error)
+                    _embeddedTrackStatus.value = "正在重试读取轨道…"
+                }) {
+                    withTimeout(20_000) {
+                        withContext(Dispatchers.IO) {
+                            subtitleIo.withLock { EmbeddedSubtitleReader.listTracks(appContext, ::openVideoDataSource) }
+                        }
                     }
                 }
                 _embeddedTracks.value = tracks

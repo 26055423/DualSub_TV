@@ -35,6 +35,8 @@ class RemoteBrowserFactory(
         RemoteType.QUARK -> QuarkBrowser(quarkAuth.apiClient())
         RemoteType.BAIDU -> BaiduBrowser(baiduAuth)
         RemoteType.WEBDAV -> WebDavBrowser(location)
+        // 各家 NAS（飞牛 / 群晖 / 威联通 / 绿联）的接入协议都是它们自带的 WebDAV。
+        RemoteType.NAS -> WebDavBrowser(location)
         RemoteType.ALI -> AliBrowser(aliAuth)
     }
 }

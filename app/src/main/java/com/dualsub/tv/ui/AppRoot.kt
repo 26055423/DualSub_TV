@@ -15,6 +15,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -65,6 +66,18 @@ fun AppRoot(externalVideoUri: Uri? = null) {
                 // 离开页面即释放播放器和字幕任务，不保存进度
                 playerViewModel.release()
             }
+        }
+        // 播放期间保持屏幕常亮。
+        //
+        // 电视自己的自动屏保会在**长时间没有按键交互**时熄屏，顺带销毁 SurfaceView 的
+        // surface —— 解除之后 libVLC 的视频输出未必能自动接回，表现为「声音正常、画面全黑」。
+        // 这里是第一道防线（从源头不让屏保来）；[PlayerViewModel.onAppForeground] 里的
+        // vout 重挂是第二道，兜住"还是被打断了"的情况。
+        val rootView = LocalView.current
+        DisposableEffect(rootView) {
+            val previous = rootView.keepScreenOn
+            rootView.keepScreenOn = true
+            onDispose { rootView.keepScreenOn = previous }
         }
         // 监听 Lifecycle：Home 键切到后台时暂停，回到前台时恢复
         val lifecycleOwner = LocalLifecycleOwner.current

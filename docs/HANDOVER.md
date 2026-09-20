@@ -25,7 +25,7 @@
 - 路径：`D:\Projects\DualSub_TV`
 - 包名：`com.dualsub.tv`
 - 远程：`git@github.com:26055423/DualSub_TV.git`，分支 `main`
-- **最后一个已提交的 commit：`5bd2837`** —— 之后所有改动都在工作区，**未提交**
+- **最后一个已提交的 commit：`c441ce3`**（字幕会话复用与区间缓存）—— 之后的改动都在工作区，**未提交**
 - **未跟踪且故意不提交**：`DualSub_TV - 制作一个安卓TV的播放器APP，要求….md`（2.4 MB 会话记录）
 
 ### 目标形态
@@ -38,15 +38,17 @@
 
 ## 二、当前状态
 
-### 已完成（代码在工作区，编译通过，已打进 APK）
+### 已完成（代码在工作区，编译通过）
 
 | 主题 | 落点 |
 |---|---|
 | **UI 风格统一**：深墨夜景 + 无色玻璃 + 香槟金 | `ui/theme/BeiGlass.kt`（唯一色板 + `BeiDims` + `BeiMotion`）；两套旧色板已删除 |
 | **UI 简约化**：色阶收敛（玻璃一档、描边两种色、香槟实色 + 15% 填充） | 同上，见 `UI_STYLE_REFERENCE.md` §六 |
-| **外壳**：左导航（3 项）+ 夜景观底 + 光斑 + 玻璃导航 | `ui/shell/AppShell.kt`、`ui/shell/BeiUi.kt` |
+| **外壳**：**顶部横向标签（3 项）** + 夜景观底 + 光斑（原左侧导航栏） | `ui/shell/AppShell.kt`、`ui/shell/BeiUi.kt` |
+| **内容改横向行**：媒体库按文件夹分行、网络页各分组一行 | `ui/library/LibraryScreen.kt`、`ui/network/NetworkRows.kt` |
 | **主字幕改 Compose 自绘**（原交 libVLC） | `PlayerViewModel` + `SubtitleOverlay`；图片字幕仍交 libVLC |
-| **网络页合并**：SMB + 扫描局域网 →「本地网络」子页（进入即扫描 + 「＋ 手动配置」），卡片 7 → 6 张 | `ui/network/LocalNetworkScreen.kt`、`NetworkScreen.kt` |
+| **网络页分组**：7 张来源卡 → **5 个一级入口**（本地网络 / 云盘 / NAS / WebDAV / DLNA） | `ui/network/NetworkScreen.kt`、`CloudDriveScreen.kt`、`NasVendorScreen.kt` |
+| **NAS 按品牌接入**：飞牛 / 群晖 / 威联通 / 绿联，各家预填端口 + 自动探测 | `network/nas/NasVendor.kt`、`NasWebDavProbe.kt`、`ui/network/NasServerForm.kt`；`RemoteType.NAS` 复用 `WebDavBrowser` |
 | **退出播放确认框** + **返回键逐层退出** | `ui/player/components/PlayerExitConfirmOverlay.kt`、`PlayerScreen` 的 `BackHandler` |
 | **覆盖层互斥**：整页选择页打开时不画菜单 | `PlayerScreen` 渲染树 |
 | **字幕尽量单行**：合并换行后测一次，放不下就按原断行 | `SubtitleOverlay.rememberSingleLineCue` |
@@ -103,6 +105,10 @@ vlc-android 的 freetype 走**专用 Android 后端**，**只读 `/system/etc/fo
 
 ### 5. 字幕缓存复用与退出清理
 
+- **首次加载失败修正（待编译/设备验证）**：临时读取源的关闭异常不能推翻已经成功读取的轨道/字幕结果；
+  `useReadResult` 保留成功结果并记关闭日志，实际读取失败仍传播。持久会话的退出关闭继续由清理器处理。
+  启动的容器嗅探与列轨共用 I/O 锁，避免并发初始化同一冷 SMB 会话；列轨遇到 I/O、SMB 或超时错误时自动重试一次，
+  用户取消与格式错误不重试。新增单元/Android 回归已写入，但本轮构建因自动审批登录令牌失效未能执行，不能沿用前轮通过数字。
 - `EmbeddedSubtitleReader.Session` 的复用**仅限 Matroska**：同一视频复用源、解析器和字幕位置索引。
   非 Matroska 仍按次创建源及 `MediaExtractorCompat`，不复用解析器；两种路径都可使用上层按轨/区间的字幕缓存。
   只预存各文本轨的索引元数据，正文仍按选中轨读取。读取失败或取消后重建解析器，不能沿用半个样本。
@@ -267,6 +273,8 @@ adb logcat -d -s DualSubTV
 - [ ] **SMB 连接断开后能否自愈**：真机上播 SMB 片源 → 到 NAS 上踢掉当前会话（或等空闲超时）
       → 打开「字幕设置」看是否还能读出轨道，而不是报错
 - [ ] **「本地网络」自动扫描**：进去是否立刻开始扫描、扫到的设备点一下是否回填主机名
+- [ ] **「飞牛 NAS」一键接入**：填 IP + 账号密码，看是否自动试出 5005 / 5006 并直接进目录。
+      前提是飞牛后台已开启 WebDAV（默认是关的，见 §三.5 的提示文案）
 - [ ] 图片字幕（有 PGS 的片源）是否仍正常
 - [ ] 网速读数：目前**只对网络片源显示**（本地文件按设计不显示读盘速率）；
       SMB 片源上的真实读数未验证

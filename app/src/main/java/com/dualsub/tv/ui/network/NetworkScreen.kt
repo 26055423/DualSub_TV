@@ -4,13 +4,11 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.GridItemSpan
-import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -30,14 +28,13 @@ import com.dualsub.tv.media.VideoItem
 import com.dualsub.tv.network.RemoteLocation
 import com.dualsub.tv.network.RemoteType
 import com.dualsub.tv.network.dlna.DlnaDevice
+import com.dualsub.tv.network.nas.NasVendor
 import com.dualsub.tv.network.webdrive.AliAuthState
 import com.dualsub.tv.network.webdrive.BaiduAuthState
 import com.dualsub.tv.network.webdrive.QuarkAuthState
 import com.dualsub.tv.ui.shell.BeiCard
 import com.dualsub.tv.ui.shell.BeiIconCard
 import com.dualsub.tv.ui.shell.BeiPageHeader
-import com.dualsub.tv.ui.shell.BeiPillButton
-import com.dualsub.tv.ui.shell.BeiSectionTitle
 import com.dualsub.tv.ui.shell.SourceIcon
 import com.dualsub.tv.ui.shell.SourceKind
 import com.dualsub.tv.ui.theme.BeiDims
@@ -48,42 +45,41 @@ import kotlinx.coroutines.launch
 private sealed interface FormMode {
     data object Closed : FormMode
 
-    /** 新增；[host] 来自局域网扫描结果时预填主机名。 */
+    /** 新增 SMB；[host] 来自局域网扫描结果时预填主机名。 */
     data class Create(val host: String?) : FormMode
 
-    /** 编辑已有条目 —— 改 IP、改密码、换共享都走这里。 */
+    /** 编辑已有 SMB 条目 —— 改 IP、改密码、换共享都走这里。 */
     data class Edit(val location: RemoteLocation) : FormMode
 
-    /** 夸克网盘扫码登录。 */
     data object QuarkLogin : FormMode
-
-    /** 百度网盘 Device Code 登录。 */
     data object BaiduLogin : FormMode
+    data object AliLogin : FormMode
 
-    /** 添加 WebDAV 服务器。 */
     data object WebDavCreate : FormMode
-
-    /** 编辑已有 WebDAV 服务器。 */
     data class WebDavEdit(val location: RemoteLocation) : FormMode
 
-    /** 阿里云盘扫码登录。 */
-    data object AliLogin : FormMode
+    /** 按品牌接入 NAS —— 四家共用一套探测，差异全在 [NasVendor] 的数据里。 */
+    data class NasCreate(val vendor: NasVendor) : FormMode
+    data class NasEdit(val vendor: NasVendor, val location: RemoteLocation) : FormMode
 }
 
 /**
- * 「网络位置」：管理 SMB / WebDAV / DLNA / 网盘来源，并进入目录浏览。
+ * 「网络位置」：五个一级入口 —— **本地网络 / 云盘 / NAS / WebDAV / DLNA**。
  *
- * 版面是**大图标卡网格**："能做什么"平铺在用户面前，每张卡一个图标 + 名称 + 一行状态。
- * 原有能力一个不少 —— 添加、扫描、扫码登录、进入、编辑、退出登录、删除都在卡片上。
+ * ## 为什么从「7 张来源卡平铺」改成「5 个入口」
  *
- * 图标底色**不是品牌色**（早先是 SMB 蓝 / WebDAV 绿 / DLNA 紫 各一套渐变）：规范要求
- * 面板不上色、强调色只有一个，所以统一成无色玻璃底 + 香槟金符号，靠**符号形状**分辨来源。
+ * 原先 7 类来源平铺在一排，其中**三家网盘占了近一半位置**，而它们其实是同一类东西：
+ * 都要登录、文件在互联网上、进去之后的操作完全一样。收进「云盘」一个子页之后腾出来的位置
+ * 给了 NAS / WebDAV / DLNA 这些"接自己设备"的入口，五张卡一屏放得下。
  *
- * ## 为什么是 6 张卡、3 列
+ * 图标也为此从 56dp 收到 44dp（见 `BeiDims.IconSourceCard`）：卡片矮一截，
+ * 一行五个入口加一行「已保存」正好一屏。
  *
- * 早先是 7 张（「SMB 共享」与「扫描局域网」分立）。合并成一张 **「本地网络」**
- * （见 [LocalNetworkScreen]）之后正好 6 张 —— 3 列 × 2 行，比 4 列那种"最后一行只两张"均衡。
- * 也因此主页上不再需要「扫描结果」分区：扫描这件事整体挪进了子页。
+ * 分组：**接入方式**（5 张）→ **已保存**（所有类型混在一起，按用户要求留在主页）→
+ * **发现的 DLNA 设备**（点 DLNA 卡就地扫出来的临时结果，排最后）。
+ *
+ * 图标底色**不是品牌色**：规范要求面板不上色、强调色只有一个，所以统一成无色玻璃底 +
+ * 香槟金符号，靠**符号形状**分辨来源。横向行的容器与位置卡在 [NetworkRows]。
  *
  * 本页**不画标题栏，也不放「AI 字幕设置」入口** —— 前者由外壳提供，后者已收进「设置」里
  * （见 [com.dualsub.tv.ui.shell.ShellTab]）。
@@ -101,8 +97,9 @@ fun NetworkScreen(
     var busy by remember { mutableStateOf(false) }
     var discoveredDlna by remember { mutableStateOf<List<DlnaDevice>>(emptyList()) }
     var message by remember { mutableStateOf<String?>(null) }
-    /** 「本地网络」子页是否打开（子页里进去就自动扫描 SMB 主机）。 */
     var localNetworkOpen by remember { mutableStateOf(false) }
+    var cloudOpen by remember { mutableStateOf(false) }
+    var nasOpen by remember { mutableStateOf(false) }
 
     val quarkState by services.quarkAuth.state.collectAsState()
     val baiduState by services.baiduAuth.state.collectAsState()
@@ -137,49 +134,13 @@ fun NetworkScreen(
         }
     }
 
-    val current = browsing
-    if (current != null) {
-        RemoteBrowseScreen(
-            services = services,
-            location = current,
-            onOpenVideo = onOpenVideo,
-            onExit = { browsing = null }
-        )
-        return
-    }
-
-    // ---- 「本地网络」子页：进去就自动扫描，扫到的设备点一下回填主机名
-    if (localNetworkOpen) {
-        LocalNetworkScreen(
-            services = services,
-            savedLocations = locations.filter { it.type == RemoteType.SMB },
-            onPickHost = { host ->
-                localNetworkOpen = false
-                form = FormMode.Create(host)
-            },
-            onOpenSaved = { location ->
-                localNetworkOpen = false
-                browsing = location
-            },
-            onManualAdd = {
-                localNetworkOpen = false
-                form = FormMode.Create(null)
-            },
-            onExit = { localNetworkOpen = false }
-        )
-        return
-    }
-
-    // 表单打开时，返回键先把表单关掉（回到卡片网格），而不是退出这一页
-    BackHandler {
-        if (form != FormMode.Closed) form = FormMode.Closed
-    }
-
     fun persistAll(updated: List<RemoteLocation>) {
         locations = updated
         services.smbRegistry.registerAll(updated)
         scope.launch { services.settings.saveRemoteLocations(updated) }
     }
+
+    fun remove(location: RemoteLocation) = persistAll(locations - location)
 
     fun openDlna(device: DlnaDevice) {
         val location = RemoteLocation(
@@ -211,21 +172,110 @@ fun NetworkScreen(
         }
     }
 
-    /** 网盘卡片的统一点击行为：已登录就直接浏览，没登录就走登录流程。 */
-    fun openCloud(type: RemoteType, id: String, name: String, host: String, login: FormMode) {
-        val loggedIn = when (type) {
-            RemoteType.QUARK -> quarkState is QuarkAuthState.LoggedIn
-            RemoteType.BAIDU -> baiduState is BaiduAuthState.LoggedIn
-            RemoteType.ALI -> aliState is AliAuthState.LoggedIn
-            else -> false
-        }
-        if (loggedIn) {
-            browsing = locations.firstOrNull { it.type == type }
-                ?: RemoteLocation(id = id, type = type, displayName = name, host = host)
-        } else {
-            form = login
-        }
+    // ---------------------------------------------------------------- 子页分派
+
+    val current = browsing
+    if (current != null) {
+        RemoteBrowseScreen(
+            services = services,
+            location = current,
+            onOpenVideo = onOpenVideo,
+            onExit = { browsing = null }
+        )
+        return
     }
+
+    // ---- 「本地网络」：进去就自动扫描，扫到的设备点一下回填主机名
+    if (localNetworkOpen) {
+        LocalNetworkScreen(
+            services = services,
+            savedLocations = locations.filter { it.type == RemoteType.SMB },
+            onPickHost = { host ->
+                localNetworkOpen = false
+                form = FormMode.Create(host)
+            },
+            onOpenSaved = { location ->
+                localNetworkOpen = false
+                browsing = location
+            },
+            onManualAdd = {
+                localNetworkOpen = false
+                form = FormMode.Create(null)
+            },
+            onExit = { localNetworkOpen = false }
+        )
+        return
+    }
+
+    // ---- 「云盘」：夸克 / 百度 / 阿里
+    if (cloudOpen) {
+        CloudDriveScreen(
+            quarkLoggedIn = quarkState is QuarkAuthState.LoggedIn,
+            baiduLoggedIn = baiduState is BaiduAuthState.LoggedIn,
+            aliLoggedIn = aliState is AliAuthState.LoggedIn,
+            savedLocations = locations.filter { it.type in CLOUD_TYPES },
+            onCloud = { type ->
+                val (id, name, host) = cloudSpec(type)
+                val loggedIn = when (type) {
+                    RemoteType.QUARK -> quarkState is QuarkAuthState.LoggedIn
+                    RemoteType.BAIDU -> baiduState is BaiduAuthState.LoggedIn
+                    else -> aliState is AliAuthState.LoggedIn
+                }
+                cloudOpen = false
+                if (loggedIn) {
+                    browsing = locations.firstOrNull { it.type == type }
+                        ?: RemoteLocation(id = id, type = type, displayName = name, host = host)
+                } else {
+                    form = when (type) {
+                        RemoteType.QUARK -> FormMode.QuarkLogin
+                        RemoteType.BAIDU -> FormMode.BaiduLogin
+                        else -> FormMode.AliLogin
+                    }
+                }
+            },
+            onOpenSaved = { cloudOpen = false; browsing = it },
+            onLogout = { location ->
+                when (location.type) {
+                    RemoteType.QUARK -> services.quarkAuth.logout()
+                    RemoteType.BAIDU -> services.baiduAuth.logout()
+                    else -> services.aliAuth.logout()
+                }
+                remove(location)
+            },
+            onDelete = { remove(it) },
+            onExit = { cloudOpen = false }
+        )
+        return
+    }
+
+    // ---- 「NAS」：飞牛 / 群晖 / 威联通 / 绿联
+    if (nasOpen) {
+        NasVendorScreen(
+            savedLocations = locations.filter { it.type == RemoteType.NAS },
+            onVendor = { vendor ->
+                nasOpen = false
+                form = FormMode.NasCreate(vendor)
+            },
+            onOpenSaved = { location ->
+                nasOpen = false
+                browsing = location
+            },
+            onEditSaved = { location ->
+                nasOpen = false
+                vendorOf(location)?.let { form = FormMode.NasEdit(it, location) }
+            },
+            onDelete = { remove(it) },
+            onExit = { nasOpen = false }
+        )
+        return
+    }
+
+    // 表单打开时，返回键先把表单关掉（回到卡片行），而不是退出这一页
+    BackHandler {
+        if (form != FormMode.Closed) form = FormMode.Closed
+    }
+
+    // ---------------------------------------------------------------- 表单分派
 
     val mode = form
     when (mode) {
@@ -267,16 +317,10 @@ fun NetworkScreen(
             QuarkLoginScreen(
                 quarkAuth = services.quarkAuth,
                 onSuccess = { cookie ->
-                    val existing = locations.firstOrNull { it.type == RemoteType.QUARK }
-                    val location = (existing ?: RemoteLocation(
-                        id = "quark:account",
-                        type = RemoteType.QUARK,
-                        displayName = "夸克网盘",
-                        host = "drive.quark.cn"
-                    )).copy(token = cookie)
-                    persistAll(locations.filterNot { it.id == location.id } + location)
+                    val updated = upsertAccount(RemoteType.QUARK, locations, token = cookie)
+                    persistAll(updated)
                     form = FormMode.Closed
-                    browsing = location
+                    browsing = updated.firstOrNull { it.type == RemoteType.QUARK }
                 },
                 onCancel = { form = FormMode.Closed }
             )
@@ -287,16 +331,26 @@ fun NetworkScreen(
             BaiduLoginScreen(
                 baiduAuth = services.baiduAuth,
                 onSuccess = { access, refresh ->
-                    val existing = locations.firstOrNull { it.type == RemoteType.BAIDU }
-                    val location = (existing ?: RemoteLocation(
-                        id = "baidu:account",
-                        type = RemoteType.BAIDU,
-                        displayName = "百度网盘",
-                        host = "pan.baidu.com"
-                    )).copy(token = access, refreshToken = refresh)
-                    persistAll(locations.filterNot { it.id == location.id } + location)
+                    val updated = upsertAccount(RemoteType.BAIDU, locations, token = access, refresh = refresh)
+                    persistAll(updated)
                     form = FormMode.Closed
-                    browsing = location
+                    browsing = updated.firstOrNull { it.type == RemoteType.BAIDU }
+                },
+                onCancel = { form = FormMode.Closed }
+            )
+            return
+        }
+
+        is FormMode.AliLogin -> {
+            AliLoginScreen(
+                aliAuth = services.aliAuth,
+                onSuccess = { access, refresh, driveId ->
+                    val updated = upsertAccount(
+                        RemoteType.ALI, locations, token = access, refresh = refresh, driveId = driveId
+                    )
+                    persistAll(updated)
+                    form = FormMode.Closed
+                    browsing = updated.firstOrNull { it.type == RemoteType.ALI }
                 },
                 onCancel = { form = FormMode.Closed }
             )
@@ -327,39 +381,45 @@ fun NetworkScreen(
             return
         }
 
-        is FormMode.AliLogin -> {
-            AliLoginScreen(
-                aliAuth = services.aliAuth,
-                onSuccess = { access, refresh, driveId ->
-                    val existing = locations.firstOrNull { it.type == RemoteType.ALI }
-                    val location = (existing ?: RemoteLocation(
-                        id = "ali:account",
-                        type = RemoteType.ALI,
-                        displayName = "阿里云盘",
-                        host = "api.aliyundrive.com"
-                    )).copy(token = access, refreshToken = refresh, share = driveId)
+        is FormMode.NasCreate -> {
+            NasServerForm(
+                vendor = mode.vendor,
+                onCancel = { form = FormMode.Closed },
+                onSave = { location ->
                     persistAll(locations.filterNot { it.id == location.id } + location)
                     form = FormMode.Closed
                     browsing = location
-                },
-                onCancel = { form = FormMode.Closed }
+                }
+            )
+            return
+        }
+
+        is FormMode.NasEdit -> {
+            NasServerForm(
+                vendor = mode.vendor,
+                initial = mode.location,
+                onCancel = { form = FormMode.Closed },
+                onSave = { location ->
+                    persistAll(locations.map { if (it.id == mode.location.id) location else it })
+                    form = FormMode.Closed
+                }
             )
             return
         }
     }
 
-    val quarkLoggedIn = quarkState is QuarkAuthState.LoggedIn
-    val baiduLoggedIn = baiduState is BaiduAuthState.LoggedIn
-    val aliLoggedIn = aliState is AliAuthState.LoggedIn
+    // ---------------------------------------------------------------- 主页
 
     val smbCount = locations.count { it.type == RemoteType.SMB }
+    val cloudCount = locations.count { it.type in CLOUD_TYPES }
+    val nasCount = locations.count { it.type == RemoteType.NAS }
     val webDavCount = locations.count { it.type == RemoteType.WEBDAV }
     val dlnaCount = locations.count { it.type == RemoteType.DLNA }
 
     Column(modifier = Modifier.fillMaxSize()) {
         BeiPageHeader(
             title = "网络位置",
-            subtitle = "本地网络（SMB）· WebDAV · DLNA 媒体服务器 · 夸克 / 百度 / 阿里云盘"
+            subtitle = "本地网络 · 云盘 · NAS · WebDAV · DLNA"
         )
 
         message?.let { text ->
@@ -371,159 +431,132 @@ fun NetworkScreen(
             )
         }
 
-        // 3 列：六张来源卡正好两行排满。
-        LazyVerticalGrid(
-            columns = GridCells.Fixed(3),
+        LazyColumn(
             modifier = Modifier.weight(1f),
-            contentPadding = PaddingValues(top = 18.dp, bottom = 24.dp),
-            horizontalArrangement = Arrangement.spacedBy(BeiDims.CardGap),
-            verticalArrangement = Arrangement.spacedBy(BeiDims.CardGap)
+            contentPadding = PaddingValues(top = 18.dp, bottom = 24.dp, start = 2.dp, end = 2.dp),
+            verticalArrangement = Arrangement.spacedBy(18.dp)
         ) {
-            item {
-                BeiIconCard(
-                    title = "本地网络",
-                    subtitle = if (smbCount > 0) "已添加 $smbCount 个" else "扫描并接入 NAS 共享",
-                    onClick = { localNetworkOpen = true }
-                ) { SourceIcon(kind = SourceKind.Smb) }
-            }
-            item {
-                BeiIconCard(
-                    title = "WebDAV",
-                    subtitle = if (webDavCount > 0) "已添加 $webDavCount 个" else "坚果云 / 群晖等",
-                    onClick = { form = FormMode.WebDavCreate }
-                ) { SourceIcon(kind = SourceKind.WebDav) }
-            }
-            item {
-                BeiIconCard(
-                    title = "DLNA",
-                    subtitle = when {
-                        busy -> "正在搜索…"
-                        dlnaCount > 0 -> "已保存 $dlnaCount 个设备"
-                        else -> "发现局域网媒体服务器"
-                    },
-                    onClick = { scanDlna() }
-                ) { SourceIcon(kind = SourceKind.Dlna) }
-            }
-            item {
-                BeiIconCard(
-                    title = "夸克网盘",
-                    subtitle = if (quarkLoggedIn) "已登录" else "扫码登录",
-                    onClick = {
-                        openCloud(
-                            type = RemoteType.QUARK,
-                            id = "quark:account",
-                            name = "夸克网盘",
-                            host = "drive.quark.cn",
-                            login = FormMode.QuarkLogin
-                        )
+            item(key = "entries") {
+                NetworkRow(title = "接入方式") {
+                    item {
+                        BeiIconCard(
+                            title = "本地网络",
+                            subtitle = if (smbCount > 0) "已添加 $smbCount 个" else "扫描并接入 NAS 共享",
+                            onClick = { localNetworkOpen = true },
+                            modifier = Modifier.width(SourceCardWidth)
+                        ) { SourceIcon(kind = SourceKind.Smb) }
                     }
-                ) { SourceIcon(kind = SourceKind.Quark) }
-            }
-            item {
-                BeiIconCard(
-                    title = "百度网盘",
-                    subtitle = if (baiduLoggedIn) "已登录" else "设备码登录",
-                    onClick = {
-                        openCloud(
-                            type = RemoteType.BAIDU,
-                            id = "baidu:account",
-                            name = "百度网盘",
-                            host = "pan.baidu.com",
-                            login = FormMode.BaiduLogin
-                        )
+                    item {
+                        BeiIconCard(
+                            title = "云盘",
+                            subtitle = if (cloudCount > 0) "已添加 $cloudCount 个" else "夸克 / 百度 / 阿里云盘",
+                            onClick = { cloudOpen = true },
+                            modifier = Modifier.width(SourceCardWidth)
+                        ) { SourceIcon(kind = SourceKind.CloudDrive) }
                     }
-                ) { SourceIcon(kind = SourceKind.Baidu) }
-            }
-            item {
-                BeiIconCard(
-                    title = "阿里云盘",
-                    subtitle = if (aliLoggedIn) "已登录" else "扫码登录",
-                    onClick = {
-                        openCloud(
-                            type = RemoteType.ALI,
-                            id = "ali:account",
-                            name = "阿里云盘",
-                            host = "api.aliyundrive.com",
-                            login = FormMode.AliLogin
-                        )
+                    item {
+                        BeiIconCard(
+                            title = "NAS",
+                            subtitle = if (nasCount > 0) "已添加 $nasCount 个" else "飞牛 / 群晖 / 威联通 / 绿联",
+                            onClick = { nasOpen = true },
+                            modifier = Modifier.width(SourceCardWidth)
+                        ) { SourceIcon(kind = SourceKind.Nas) }
                     }
-                ) { SourceIcon(kind = SourceKind.Ali) }
-            }
-
-            // DLNA 的扫描结果仍留在主页（它是"点一下卡就地扫出来"的轻交互，不值得为它开子页）
-            if (discoveredDlna.isNotEmpty()) {
-                item(span = { GridItemSpan(maxLineSpan) }) { BeiSectionTitle("发现的 DLNA 设备") }
-
-                items(discoveredDlna, key = { "dlna-" + it.descriptionUrl }) { device ->
-                    BeiCard(onClick = { openDlna(device) }) {
-                        Text(
-                            text = device.friendlyName,
-                            color = BeiGlass.TextPrimary,
-                            fontSize = BeiDims.CardTitleSize,
-                            fontWeight = FontWeight.SemiBold,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        Text(
-                            text = "DLNA · ${device.host} · 点一下保存并进入",
-                            color = BeiGlass.TextSecondary,
-                            fontSize = BeiDims.CaptionSize,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
+                    item {
+                        BeiIconCard(
+                            title = "WebDAV",
+                            subtitle = if (webDavCount > 0) "已添加 $webDavCount 个" else "AList / Nextcloud 等",
+                            onClick = { form = FormMode.WebDavCreate },
+                            modifier = Modifier.width(SourceCardWidth)
+                        ) { SourceIcon(kind = SourceKind.WebDav) }
+                    }
+                    item {
+                        BeiIconCard(
+                            title = "DLNA",
+                            subtitle = when {
+                                busy -> "正在搜索…"
+                                dlnaCount > 0 -> "已保存 $dlnaCount 个设备"
+                                else -> "发现局域网媒体服务器"
+                            },
+                            onClick = { scanDlna() },
+                            modifier = Modifier.width(SourceCardWidth)
+                        ) { SourceIcon(kind = SourceKind.Dlna) }
                     }
                 }
             }
 
             if (locations.isNotEmpty()) {
-                item(span = { GridItemSpan(maxLineSpan) }) { BeiSectionTitle("已保存") }
-
-                items(locations, key = { it.id }) { location ->
-                    LocationCard(
-                        location = location,
-                        onOpen = { browsing = location },
-                        onEdit = when (location.type) {
-                            RemoteType.SMB -> { { form = FormMode.Edit(location) } }
-                            RemoteType.WEBDAV -> { { form = FormMode.WebDavEdit(location) } }
-                            else -> null
-                        },
-                        onLogout = when (location.type) {
-                            RemoteType.QUARK -> {
-                                {
-                                    services.quarkAuth.logout()
-                                    persistAll(locations.filterNot { it.id == location.id })
+                item(key = "saved") {
+                    NetworkRow(title = "已保存 · ${locations.size}") {
+                        items(locations, key = { "saved-" + it.id }) { location ->
+                            LocationCard(
+                                location = location,
+                                onOpen = { browsing = location },
+                                onEdit = when (location.type) {
+                                    RemoteType.SMB -> { { form = FormMode.Edit(location) } }
+                                    RemoteType.WEBDAV -> { { form = FormMode.WebDavEdit(location) } }
+                                    // NAS 的编辑要知道是哪一家 —— 从 id 里还原（见 [vendorOf]）。
+                                    RemoteType.NAS -> vendorOf(location)?.let { vendor ->
+                                        { form = FormMode.NasEdit(vendor, location) }
+                                    }
+                                    else -> null
+                                },
+                                onLogout = when (location.type) {
+                                    RemoteType.QUARK -> {
+                                        { services.quarkAuth.logout(); remove(location) }
+                                    }
+                                    RemoteType.BAIDU -> {
+                                        { services.baiduAuth.logout(); remove(location) }
+                                    }
+                                    RemoteType.ALI -> {
+                                        { services.aliAuth.logout(); remove(location) }
+                                    }
+                                    else -> null
+                                },
+                                onDelete = {
+                                    services.smbPool.invalidate(location.host)
+                                    remove(location)
                                 }
-                            }
-
-                            RemoteType.BAIDU -> {
-                                {
-                                    services.baiduAuth.logout()
-                                    persistAll(locations.filterNot { it.id == location.id })
-                                }
-                            }
-
-                            RemoteType.ALI -> {
-                                {
-                                    services.aliAuth.logout()
-                                    persistAll(locations.filterNot { it.id == location.id })
-                                }
-                            }
-
-                            else -> null
-                        },
-                        onDelete = {
-                            services.smbPool.invalidate(location.host)
-                            persistAll(locations.filterNot { it.id == location.id })
+                            )
                         }
-                    )
+                    }
+                }
+            }
+
+            if (discoveredDlna.isNotEmpty()) {
+                item(key = "dlna") {
+                    NetworkRow(title = "发现的 DLNA 设备 · ${discoveredDlna.size}") {
+                        items(discoveredDlna, key = { "dlna-" + it.descriptionUrl }) { device ->
+                            BeiCard(
+                                onClick = { openDlna(device) },
+                                modifier = Modifier.width(LocationCardWidth)
+                            ) {
+                                Text(
+                                    text = device.friendlyName,
+                                    color = BeiGlass.TextPrimary,
+                                    fontSize = BeiDims.CardTitleSize,
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    text = "DLNA · ${device.host} · 点一下保存并进入",
+                                    color = BeiGlass.TextSecondary,
+                                    fontSize = BeiDims.CaptionSize,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
+                    }
                 }
             }
 
             if (locations.isEmpty() && discoveredDlna.isEmpty()) {
-                item(span = { GridItemSpan(maxLineSpan) }) {
+                item(key = "empty") {
                     Text(
-                        text = "还没有添加任何网络位置。片子在 NAS 上的话，点「本地网络」——" +
-                            "进去会自动扫描同一网段里的共享，扫到就能填账号接入。",
+                        text = "还没有添加任何网络位置。片子在 NAS 上的话，点「本地网络」或「NAS」——" +
+                            "前者扫描同网段的共享，后者按品牌接入并自动试出端口。",
                         color = BeiGlass.TextMuted,
                         fontSize = BeiDims.BodySize,
                         modifier = Modifier.padding(top = 8.dp)
@@ -534,55 +567,46 @@ fun NetworkScreen(
     }
 }
 
-/**
- * 一条已保存的位置。
- *
- * 卡片本身可点（＝进入浏览），卡内再放「进入 / 编辑 / 退出登录 / 删除」。
- * 网盘条目没有「编辑」（没东西可编辑）但有「退出登录」；SMB / WebDAV / DLNA 反过来。
- */
-@Composable
-private fun LocationCard(
-    location: RemoteLocation,
-    onOpen: () -> Unit,
-    onEdit: (() -> Unit)?,
-    onLogout: (() -> Unit)?,
-    onDelete: () -> Unit
-) {
-    BeiCard(onClick = onOpen) {
-        Text(
-            text = location.displayName,
-            color = BeiGlass.TextPrimary,
-            fontSize = BeiDims.CardTitleSize,
-            fontWeight = FontWeight.SemiBold,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
-        )
-        Text(
-            text = buildString {
-                append(location.type.displayName)
-                append(" · ").append(location.host)
-                location.share?.takeIf { it.isNotBlank() }?.let { append("/").append(it) }
-                if (location.type.isSmbLike) {
-                    append(" · ")
-                    append(if (location.isAnonymous) "匿名" else location.username)
-                }
-            },
-            color = BeiGlass.TextSecondary,
-            fontSize = BeiDims.CaptionSize,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
-        )
-        Row(
-            modifier = Modifier.padding(top = 6.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            BeiPillButton(label = "进入", onClick = onOpen)
-            onEdit?.let { BeiPillButton(label = "编辑", onClick = it) }
-            onLogout?.let { BeiPillButton(label = "退出登录", onClick = it) }
-            BeiPillButton(label = "删除", onClick = onDelete)
-        }
-    }
+/** 云盘三家 —— 子页筛选、计数、登录分派都用它，免得散成三处 `||`。 */
+private val CLOUD_TYPES = setOf(RemoteType.QUARK, RemoteType.BAIDU, RemoteType.ALI)
+
+/** 云盘账号位置的三要素：`RemoteLocation` 的 id / 显示名 / host。 */
+private fun cloudSpec(type: RemoteType): Triple<String, String, String> = when (type) {
+    RemoteType.QUARK -> Triple("quark:account", "夸克网盘", "drive.quark.cn")
+    RemoteType.BAIDU -> Triple("baidu:account", "百度网盘", "pan.baidu.com")
+    else -> Triple("ali:account", "阿里云盘", "api.aliyundrive.com")
 }
 
-/** 只有 SMB 才显示「匿名 / 用户名」—— 别的类型没有这回事。 */
-private val RemoteType.isSmbLike: Boolean get() = this == RemoteType.SMB
+/**
+ * 云盘登录成功后把账号写回位置列表：已有同类型条目就更新 token，没有就新建一条。
+ *
+ * 三家共用这一个（阿里额外带 `driveId`）—— 早先三处各写一遍，加字段时极易漏掉其中一处。
+ */
+private fun upsertAccount(
+    type: RemoteType,
+    locations: List<RemoteLocation>,
+    token: String,
+    refresh: String? = null,
+    driveId: String? = null
+): List<RemoteLocation> {
+    val (id, name, host) = cloudSpec(type)
+    val existing = locations.firstOrNull { it.type == type }
+    val location = (existing ?: RemoteLocation(id = id, type = type, displayName = name, host = host))
+        .copy(
+            token = token,
+            refreshToken = refresh ?: existing?.refreshToken,
+            share = driveId ?: existing?.share
+        )
+    return locations.filterNot { it.id == location.id } + location
+}
+
+/**
+ * 从 `RemoteLocation.id` 里还原 NAS 品牌。
+ *
+ * id 形如 `nas:SYNOLOGY:http://192.168.1.252:5005` —— 品牌名嵌在里面，这样「编辑」才知道
+ * 该回到哪一家的表单，而不必给 `RemoteType` 加四个语义完全相同的枚举值。
+ */
+private fun vendorOf(location: RemoteLocation): NasVendor? = location.id
+    .removePrefix("nas:")
+    .substringBefore(':')
+    .let { name -> NasVendor.entries.firstOrNull { it.name == name } }

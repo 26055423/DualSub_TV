@@ -155,8 +155,16 @@ class VlcPlayerController(context: Context, cachingMs: Int = 1500) {
 
     // ---------------------------------------------------------------- 视频画布
 
+    /**
+     * 当前挂着的视频画布。
+     *
+     * 留着它是给 [restoreVideoOutput] 用的 —— 屏保 / 息屏解除后要靠它重新挂一次。
+     */
+    private var videoLayout: VLCVideoLayout? = null
+
     fun attachViews(layout: VLCVideoLayout) {
         if (released) return
+        videoLayout = layout
         // 参数：视频容器 / DisplayManager（null 表示用默认显示）/ **是否启用字幕 Surface** / 是否用 TextureView
         //
         // 第三个参数必须是 true：主字幕由 libVLC 的 libass 渲染到它开出来的
@@ -164,6 +172,27 @@ class VlcPlayerController(context: Context, cachingMs: Int = 1500) {
         // 次字幕与此无关 —— 它画在 Compose 层，位于 VLCVideoLayout 之上。
         runCatching { mediaPlayer.attachViews(layout, null, true, false) }
             .onFailure { Log.w(TAG, "attachViews 失败：${it.message}") }
+    }
+
+    /**
+     * 回到前台时把画面接回来。
+     *
+     * **真机反馈的「屏保之后黑屏、声音照旧」就是这里没做**：电视自动屏保会让 Activity 走到
+     * `onStop`，`VLCVideoLayout` 内部 SurfaceView 的 surface 随之销毁；屏保解除后 surface 重建，
+     * 而 libVLC 的 vout 常常**仍报告 attached 却不再输出** —— 音频轨道照跑，所以听上去一切正常，
+     * 只是没有画面。
+     *
+     * 因此这里**不看 `areViewsAttached()`**：那种状态下它返回的就是 true，看了反而不重挂。
+     * 一律先 detach 再 attach，代价是一帧闪烁，换来的是"一定能回来"。
+     * 最后再催一次布局 —— surface 重建后尺寸可能还是屏保前的旧值，vout 拿到错的窗口大小同样没画面。
+     */
+    fun restoreVideoOutput() {
+        if (released) return
+        val layout = videoLayout ?: return
+        runCatching { mediaPlayer.detachViews() }
+        runCatching { mediaPlayer.attachViews(layout, null, true, false) }
+            .onFailure { Log.w(TAG, "回到前台重挂视频画布失败：${it.message}") }
+        layout.requestLayout()
     }
 
     fun detachViews() {

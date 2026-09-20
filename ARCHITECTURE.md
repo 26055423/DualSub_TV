@@ -29,8 +29,8 @@
 Android TV / 大屏电视播放器，核心功能是同时渲染**两路相互独立的字幕**（主字幕 + 次字幕）。
 典型场景：看外语片时主字幕显示母语、次字幕显示目标语言，方便对照学习。
 
-支持的视频来源：本地存储、SMB（NAS）、DLNA、WebDAV（AList / Nextcloud 等）、
-夸克网盘、百度网盘、阿里云盘。
+支持的视频来源：本地存储、SMB（NAS）、**飞牛 NAS**（fnOS，走它自带的 WebDAV）、DLNA、
+WebDAV（AList / Nextcloud 等）、夸克网盘、百度网盘、阿里云盘。
 
 ---
 
@@ -114,7 +114,8 @@ app/src/main/java/com/dualsub/tv/
 │   │   ├── SmbSession.kt           # 单台服务器的连接会话（含两层自愈，见 §6）
 │   │   ├── SmbSessionPool.kt       # 按主机复用连接 + SmbLocationRegistry
 │   │   ├── SmbPaths.kt / ReadFullyAt.kt / SubnetHosts.kt / SmbSecurity.kt
-│   └── webdrive/            # 云网盘：Quark / Baidu / Ali 各三个文件 + WebDavBrowser
+│   ├── webdrive/            # 云网盘（Quark / Baidu / Ali 各三个文件）+ WebDavBrowser
+│   └── nas/                 # NasVendor（四家默认端口 / 开启路径）+ NasWebDavProbe（PROPFIND 探测）
 │
 ├── player/                  # 播放引擎封装与字幕数据结构
 │   ├── VlcPlayerController.kt      # libVLC 封装（为何换引擎见 §4.1）
@@ -138,15 +139,20 @@ app/src/main/java/com/dualsub/tv/
     │   ├── BeiGlass.kt             # **唯一色板** + BeiDims（尺寸）+ BeiMotion（动效）
     │   └── Theme.kt                # tv-material3 darkColorScheme()
     ├── shell/
-    │   ├── AppShell.kt             # 左侧导航 + 夜景观底/光斑 + ShellTab 枚举
-    │   └── BeiUi.kt                # 复用基础件：标题/卡片/胶囊按钮/选项胶囊/来源图标
-    ├── library/LibraryScreen.kt
+    │   ├── AppShell.kt             # **顶部横向标签** + 夜景观底/光斑 + ShellTab 枚举
+    │   ├── BeiUi.kt                # 复用基础件：标题/卡片/胶囊按钮/选项胶囊/来源图标
+    │   └── BeiTextField.kt         # 表单输入框（WebDAV 与 NAS 表单共用同一套）
+    ├── library/LibraryScreen.kt    # 横向行、按文件夹分组
     ├── settings/
     │   ├── SettingsScreen.kt       # 视频缓冲 + 主/次字幕默认样式（含 AI 字幕入口）
     │   └── AiSettingsScreen.kt     # AI 字幕配置（扫码填表）
     ├── network/
-    │   ├── NetworkScreen.kt        # 来源管理（6 张大图标卡）
+    │   ├── NetworkScreen.kt        # 5 个一级入口 + 子页 / 表单分派
+    │   ├── NetworkRows.kt          # 横向行容器 + 位置卡（主页与子页共用）
     │   ├── LocalNetworkScreen.kt   # 「本地网络」子页：进入即扫描 + 手动配置
+    │   ├── CloudDriveScreen.kt     # 「云盘」子页：夸克 / 百度 / 阿里
+    │   ├── NasVendorScreen.kt      # 「NAS」子页：飞牛 / 群晖 / 威联通 / 绿联
+    │   ├── NasServerForm.kt        # 按品牌接入的表单（预填端口 + 自动探测）
     │   ├── RemoteBrowseScreen.kt   # 通用目录浏览 + SmbServerForm
     │   ├── WebDavServerForm.kt
     │   └── Quark/Baidu/AliLoginScreen.kt
@@ -335,11 +341,42 @@ interface RemoteBrowser {
 | RemoteType | Browser | 播放 URI | 认证 |
 |---|---|---|---|
 | SMB | `SmbBrowser` + `SmbSession` | `smb://host/share/path` | 用户名/密码，`SmbLocationRegistry` 反查 |
+| NAS | `WebDavBrowser`（sardine）—— 与 WEBDAV 同一个实现 | `http(s)://…` | Basic Auth |
 | DLNA | `DlnaBrowser`（SSDP + SOAP） | `http://…`（直链） | 无 |
+| WEBDAV | `WebDavBrowser`（sardine） | `http(s)://…` | Basic Auth |
 | QUARK | `QuarkBrowser` | `quark://fid` → 运行时解析 | Cookie（扫码） |
 | BAIDU | `BaiduBrowser` | `baidu://fsid` → 运行时解析 | access + refresh token（扫码） |
-| WEBDAV | `WebDavBrowser`（sardine） | `http(s)://…` | Basic Auth |
 | ALI | `AliBrowser` | `ali://driveId/fileId` → 运行时解析 | OAuth token（扫码） |
+
+### NAS：按品牌接入，复用 WebDAV
+
+飞牛 / 群晖 / 威联通 / 绿联四家**都自带 WebDAV**，所以 `RemoteType.NAS` 的 Browser 与 `WEBDAV`
+完全一样。单独列一个类型只为了：① 「已保存」里显示成「NAS」而不是「WebDAV」；
+② 「编辑」回到那张**按品牌预填端口**的表单；③ 网络主页能把它们收进「NAS」一个入口。
+
+**具体是哪一家记在 `RemoteLocation.id` 里**（形如 `nas:SYNOLOGY:http://192.168.1.252:5005`），
+`NetworkScreen.vendorOf()` 从里面还原品牌 —— 这样不必给 `RemoteType` 加四个语义完全相同的
+枚举值（那会让 `RemoteBrowserFactory` 白写三遍）。
+
+四家的差异全部收在 `network/nas/NasVendor.kt` 的数据里（默认端口、开启菜单路径、各自的坑）：
+
+| 品牌 | 系统 | WebDAV 默认端口 | 坑（都印在表单上） |
+|---|---|---|---|
+| 飞牛 | fnOS | 5005 / 5006 | 团队文件夹要勾选「允许通过文件共享协议挂载」，否则看不到目录 |
+| 群晖 | DSM | 5005 / 5006 | WebDAV 不支持 QuickConnect 地址，要填 IP 或 DDNS |
+| 威联通 | QTS | **5000 / 5001** | **8080 是它的管理界面**，不是 WebDAV |
+| 绿联 | UGOS Pro | 5005 / 5006 | 管理界面是 9999，与 WebDAV 无关 |
+
+`NasWebDavProbe` 负责把「IP + 账号 + 密码 + 该家端口」变成「可用的 WebDAV 基地址」：
+
+- 候选顺序**先 HTTP 后 HTTPS**（端口取自 `NasVendor`）。先 HTTP 是因为各家的 HTTPS 都用自签
+  证书，在本项目的严格 TLS 校验下必然握手失败；用户自己填了端口时，同一个端口两种协议都试。
+- 探测用裸 OkHttp 发一次 `PROPFIND` + `Depth: 0`，只看**状态码**：`207` / `2xx` 算成功，
+  `401` / `403` 判「服务在、凭据不对」（这个提示必须和「连不上」分开），
+  `404` / `405` 判「端口通了但不是 WebDAV」。不复用 sardine 是因为它把这些都包成异常，
+  区分起来只能靠字符串匹配。
+- 探测只回答「这里有没有一个认下这组凭据的 WebDAV」；真正的目录浏览仍走 `WebDavBrowser`，
+  两者用同一套 host / username / password。
 
 ### SMB 的两层自愈（**踩过两次，别合并成一层**）
 
@@ -525,10 +562,12 @@ data class PlaybackFailure(
 ```
 AppRoot（状态机）
 │
-├── AppShell（左侧导航 + 内容区；播放页不进外壳）
-│   ├── ShellTab.Local    → LibraryScreen
-│   ├── ShellTab.Network  → NetworkScreen
-│   │     ├── LocalNetworkScreen（本地网络子页：进入即扫描 + 「＋ 手动配置」）
+├── AppShell（**顶部横向标签** + 内容区；播放页不进外壳）
+│   ├── ShellTab.Local    → LibraryScreen（横向行、按文件夹分组）
+│   ├── ShellTab.Network  → NetworkScreen（**5 个一级入口**）
+│   │     ├── LocalNetworkScreen（本地网络：进入即扫描 + 「＋ 手动配置」）
+│   │     ├── CloudDriveScreen（云盘：夸克 / 百度 / 阿里）
+│   │     ├── NasVendorScreen（NAS：飞牛 / 群晖 / 威联通 / 绿联）+ NasServerForm
 │   │     ├── SmbServerForm / WebDavServerForm
 │   │     ├── Quark / Baidu / AliLoginScreen
 │   │     └── RemoteBrowseScreen（通用目录浏览）
@@ -595,3 +634,18 @@ AppRoot（状态机）
 
 **无需改动**：`RemoteBrowseScreen`（通用浏览，不感知来源）、字幕系统（与来源无关）、
 `SettingsStore`（`token` / `refreshToken` / `share` 字段已预留）。
+
+### 特例：只是某个协议的「预设变体」
+
+如果新来源**不需要新协议**，只是把已有协议包装成"少填字段"的入口 ——「飞牛 NAS」之于
+WebDAV 就是这个情况（见 §6）—— 那么连 `DualSubDataSourceFactory` 和 `AppServices`
+都不用动：
+
+1. `RemoteEntry.kt` — 加枚举值（`FEINIU("飞牛 NAS")`）
+2. `RemoteBrowserFactory.kt` — 指向已有的 Browser（`RemoteType.FEINIU -> WebDavBrowser(location)`）
+3. 一个探测 / 预设模块 — 把用户少填的东西补出来（`FeiniuProbe`：试 5005 / 5006）
+4. `ui/network/` — 一张 `BeiIconCard` + 一个专用表单 + `when (form)` 两个分支
+
+代价是**同一个协议会出现在两个 `RemoteType` 里**，`RemoteBrowserFactory` 的 when 得写两遍。
+换来的是「已保存」列表显示成「飞牛 NAS」而不是「WebDAV」，以及「编辑」能回到那张
+只填地址 / 账号 / 密码的表单 —— 这正是不把飞牛直接当成 WebDAV 的理由。

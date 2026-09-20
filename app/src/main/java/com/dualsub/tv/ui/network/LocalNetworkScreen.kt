@@ -10,10 +10,10 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.GridItemSpan
-import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListScope
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -48,7 +48,10 @@ import kotlinx.coroutines.launch
  * 「本地网络」卡，**进来就自动开扫**，扫到的设备点一下即可填账号；
  * 手填表单退居成右上角的 **「＋ 手动配置」**（只有扫描不灵、或地址已知时才需要它）。
  *
- * 这样主页从 7 张卡减到 6 张，也少了一次"该点哪张卡"的判断。
+ * ## 布局：横向行
+ *
+ * 「发现的设备」与「已保存」各占一行、左右滑动，与网络主页、媒体库首页共用同一套
+ * 移动语义（左右浏览内容、上下换分组）。扫描中 / 扫描无结果的提示是整行文字，不算分组。
  *
  * ## 交互
  *
@@ -110,15 +113,13 @@ fun LocalNetworkScreen(
             BeiPillButton(label = "＋ 手动配置", onClick = onManualAdd)
         }
 
-        LazyVerticalGrid(
-            columns = GridCells.Fixed(3),
+        LazyColumn(
             modifier = Modifier.weight(1f),
-            contentPadding = PaddingValues(top = 18.dp, bottom = 24.dp),
-            horizontalArrangement = Arrangement.spacedBy(BeiDims.CardGap),
-            verticalArrangement = Arrangement.spacedBy(BeiDims.CardGap)
+            contentPadding = PaddingValues(top = 18.dp, bottom = 24.dp, start = 2.dp, end = 2.dp),
+            verticalArrangement = Arrangement.spacedBy(18.dp)
         ) {
             if (scanning) {
-                item(span = { GridItemSpan(maxLineSpan) }) {
+                item(key = "scanning") {
                     Text(
                         text = "正在扫描局域网（约 5~10 秒）…",
                         color = BeiGlass.TextSecondary,
@@ -128,7 +129,7 @@ fun LocalNetworkScreen(
             }
 
             message?.let { text ->
-                item(span = { GridItemSpan(maxLineSpan) }) {
+                item(key = "message") {
                     Text(
                         text = text,
                         color = BeiGlass.TextMuted,
@@ -138,55 +139,66 @@ fun LocalNetworkScreen(
             }
 
             if (hosts.isNotEmpty()) {
-                item(span = { GridItemSpan(maxLineSpan) }) {
-                    BeiSectionTitle("发现的设备 · ${hosts.size} 台")
-                }
-                items(hosts, key = { "host-" + it }) { host ->
-                    BeiCard(onClick = { onPickHost(host) }) {
-                        Text(
-                            text = host,
-                            color = BeiGlass.TextPrimary,
-                            fontSize = BeiDims.CardTitleSize,
-                            fontWeight = FontWeight.SemiBold,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        Text(
-                            text = "SMB 已开放 · 点一下填账号",
-                            color = BeiGlass.TextSecondary,
-                            fontSize = BeiDims.CaptionSize
-                        )
+                item(key = "hosts") {
+                    NetworkRow(title = "发现的设备 · ${hosts.size} 台") {
+                        items(hosts, key = { "host-" + it }) { host ->
+                            BeiCard(
+                                onClick = { onPickHost(host) },
+                                modifier = Modifier.width(HostCardWidth)
+                            ) {
+                                Text(
+                                    text = host,
+                                    color = BeiGlass.TextPrimary,
+                                    fontSize = BeiDims.CardTitleSize,
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    text = "SMB 已开放 · 点一下填账号",
+                                    color = BeiGlass.TextSecondary,
+                                    fontSize = BeiDims.CaptionSize
+                                )
+                            }
+                        }
                     }
                 }
             }
 
             if (savedLocations.isNotEmpty()) {
-                item(span = { GridItemSpan(maxLineSpan) }) {
-                    BeiSectionTitle("已保存")
-                }
-                items(savedLocations, key = { "saved-" + it.id }) { location ->
-                    BeiCard(onClick = { onOpenSaved(location) }) {
-                        Text(
-                            text = location.displayName,
-                            color = BeiGlass.TextPrimary,
-                            fontSize = BeiDims.CardTitleSize,
-                            fontWeight = FontWeight.SemiBold,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        Text(
-                            text = buildString {
-                                append(location.host)
-                                location.share?.takeIf { it.isNotBlank() }?.let { append("/").append(it) }
-                            },
-                            color = BeiGlass.TextSecondary,
-                            fontSize = BeiDims.CaptionSize,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
+                item(key = "saved") {
+                    NetworkRow(title = "已保存 · ${savedLocations.size}") {
+                        items(savedLocations, key = { "saved-" + it.id }) { location ->
+                            BeiCard(
+                                onClick = { onOpenSaved(location) },
+                                modifier = Modifier.width(HostCardWidth)
+                            ) {
+                                Text(
+                                    text = location.displayName,
+                                    color = BeiGlass.TextPrimary,
+                                    fontSize = BeiDims.CardTitleSize,
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    text = buildString {
+                                        append(location.host)
+                                        location.share?.takeIf { it.isNotBlank() }?.let { append("/").append(it) }
+                                    },
+                                    color = BeiGlass.TextSecondary,
+                                    fontSize = BeiDims.CaptionSize,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
                     }
                 }
             }
         }
     }
 }
+
+/** 横向行里卡片的固定宽度 —— 横向行里不定宽的话，每张卡会按自己内容的长短长得不一样。 */
+private val HostCardWidth = 320.dp

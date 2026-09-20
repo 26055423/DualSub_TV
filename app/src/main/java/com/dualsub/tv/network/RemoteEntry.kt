@@ -3,6 +3,16 @@ package com.dualsub.tv.network
 /** 局域网资源的类型。 */
 enum class RemoteType(val displayName: String) {
     SMB("SMB / 共享文件夹"),
+
+    /**
+     * 家用 NAS（飞牛 / 群晖 / 威联通 / 绿联）—— 走各家自带的 WebDAV，协议层与 [WEBDAV]
+     * 完全一样。单独列一个类型是为了：① 「已保存」里显示成「NAS」而不是「WebDAV」；
+     * ② 「编辑」回到那张**按品牌预填端口**的表单；③ 主页能把它们收进「NAS」一个入口。
+     *
+     * 具体是哪一家记在 [RemoteLocation.id] 的 `nas:<品牌>:<URL>` 里 —— 不值得为此
+     * 再加枚举字段（四种行为完全一致，会让 `RemoteBrowserFactory` 白写三遍）。
+     */
+    NAS("NAS"),
     DLNA("DLNA / 媒体服务器"),
     QUARK("夸克网盘"),
     BAIDU("百度网盘"),
