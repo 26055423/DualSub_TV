@@ -3,6 +3,9 @@ package com.dualsub.tv.ui
 import android.content.Context
 import android.net.Uri
 import android.provider.OpenableColumns
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -10,6 +13,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -20,13 +24,19 @@ import com.dualsub.tv.ui.library.LibraryScreen
 import com.dualsub.tv.ui.network.NetworkScreen
 import com.dualsub.tv.ui.player.PlayerScreen
 import com.dualsub.tv.ui.player.PlayerViewModel
-import com.dualsub.tv.ui.settings.AiSettingsScreen
+import com.dualsub.tv.ui.settings.SettingsScreen
+import com.dualsub.tv.ui.shell.AppShell
+import com.dualsub.tv.ui.shell.ShellTab
 
 /**
- * 极简导航：媒体库 ⇄ 网络位置 ⇄ 播放页。
+ * 顶层导航：**外壳（左侧导航 + 内容区）⇄ 播放页**。
  *
- * 目的地很少，手写状态机比引入 navigation-compose 更轻，
- * 也避免在 TV 上额外处理返回栈与转场动画。
+ * 目的地结构在 [ShellTab] 里定义，这里只负责把「当前选中哪个 tab」和「是否正在播放」
+ * 两个状态接上去。仍然手写状态机、不引 navigation-compose：目的地只有 3 个，而且
+ * **播放页不在外壳里**（见下），navigation 的返回栈在这里反而是负担。
+ *
+ * 播放页**不走 [AppShell]** —— 看片是沉浸式场景，左侧常驻一条导航栏只会碍事，
+ * 所以它由这里直接整屏渲染，返回即回到原来的 tab。
  *
  * 播放页的 ViewModel **不用 `viewModel()` 创建**：那个 API 把实例存进 Activity 级的
  * ViewModelStore，离开播放页时不会清除 —— 于是「返回后视频还在放」，再选另一个视频
@@ -37,8 +47,7 @@ fun AppRoot(externalVideoUri: Uri? = null) {
     val context = LocalContext.current
     val services = remember { AppServices(context) }
     var playing by remember { mutableStateOf<VideoItem?>(null) }
-    var browsingNetwork by remember { mutableStateOf(false) }
-    var browsingAiSettings by remember { mutableStateOf(false) }
+    var tab by remember { mutableStateOf(ShellTab.Local) }
 
     LaunchedEffect(externalVideoUri) {
         if (externalVideoUri != null && playing == null) {
@@ -47,49 +56,47 @@ fun AppRoot(externalVideoUri: Uri? = null) {
     }
 
     val current = playing
-    when {
-        current != null -> {
-            val playerViewModel = remember(current.storageKey) {
-                PlayerViewModel(context.applicationContext, services, current)
-            }
-            DisposableEffect(playerViewModel) {
-                onDispose {
-                    // 离开页面即释放播放器和字幕任务，不保存进度
-                    playerViewModel.release()
-                }
-            }
-            // 监听 Lifecycle：Home 键切到后台时暂停，回到前台时恢复
-            val lifecycleOwner = LocalLifecycleOwner.current
-            DisposableEffect(playerViewModel, lifecycleOwner) {
-                val observer = LifecycleEventObserver { _, event ->
-                    when (event) {
-                        Lifecycle.Event.ON_STOP  -> playerViewModel.onAppBackground()
-                        Lifecycle.Event.ON_START -> playerViewModel.onAppForeground()
-                        else -> Unit
-                    }
-                }
-                lifecycleOwner.lifecycle.addObserver(observer)
-                onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
-            }
-            PlayerScreen(viewModel = playerViewModel, onBack = { playing = null })
+    if (current != null) {
+        val playerViewModel = remember(current.storageKey) {
+            PlayerViewModel(context.applicationContext, services, current)
         }
+        DisposableEffect(playerViewModel) {
+            onDispose {
+                // 离开页面即释放播放器和字幕任务，不保存进度
+                playerViewModel.release()
+            }
+        }
+        // 监听 Lifecycle：Home 键切到后台时暂停，回到前台时恢复
+        val lifecycleOwner = LocalLifecycleOwner.current
+        DisposableEffect(playerViewModel, lifecycleOwner) {
+            val observer = LifecycleEventObserver { _, event ->
+                when (event) {
+                    Lifecycle.Event.ON_STOP  -> playerViewModel.onAppBackground()
+                    Lifecycle.Event.ON_START -> playerViewModel.onAppForeground()
+                    else -> Unit
+                }
+            }
+            lifecycleOwner.lifecycle.addObserver(observer)
+            onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+        }
+        PlayerScreen(viewModel = playerViewModel, onBack = { playing = null })
+        return
+    }
 
-        browsingAiSettings -> AiSettingsScreen(
-            settings = services.settings,
-            onExit = { browsingAiSettings = false }
-        )
+    AppShell(current = tab, onSelect = { tab = it }) { padding ->
+        // 外壳只给四周基准留白，页面自己决定内部怎么排（它们更清楚自己要多宽）。
+        Box(modifier = Modifier.fillMaxSize().padding(padding)) {
+            when (tab) {
+                ShellTab.Local -> LibraryScreen(onOpenVideo = { playing = it })
 
-        browsingNetwork -> NetworkScreen(
-            services = services,
-            onOpenVideo = { playing = it },
-            onOpenAiSettings = { browsingAiSettings = true },
-            onExit = { browsingNetwork = false }
-        )
+                ShellTab.Network -> NetworkScreen(
+                    services = services,
+                    onOpenVideo = { playing = it }
+                )
 
-        else -> LibraryScreen(
-            onOpenVideo = { playing = it },
-            onOpenNetwork = { browsingNetwork = true }
-        )
+                ShellTab.Settings -> SettingsScreen(settings = services.settings)
+            }
+        }
     }
 }
 

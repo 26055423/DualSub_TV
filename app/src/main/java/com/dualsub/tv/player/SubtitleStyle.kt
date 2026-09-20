@@ -62,5 +62,16 @@ data class SubtitleStyle(
             bottomPaddingDp = 112,
             bold = true
         )
+
+        /**
+         * 卡拉OK（`\k` / `\kf`）在**还没唱到**的那一段上用的高亮色。
+         *
+         * 它**不属于 UI 主题**（界面主题色在 `ui/theme/BeiGlass.kt`），而是**字幕渲染语义**
+         * 的一部分：片源用 `\k` 标出"这一段该被扫亮"，扫亮前后的颜色是渲染器的事，
+         * 与界面风格无关 —— 所以它跟着字幕样式走，而不是跟着色板走。
+         *
+         * 放在这里还有一个好处：字幕渲染器里不再出现裸色。
+         */
+        val KARAOKE_HIGHLIGHT_ARGB = 0xFFFFD54F.toInt()
     }
 }

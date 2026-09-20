@@ -24,6 +24,7 @@ import com.dualsub.tv.player.SubtitleStyle
 import com.dualsub.tv.player.SubtitleTrack
 import com.dualsub.tv.player.VlcPlayerController
 import com.dualsub.tv.subtitle.SubtitleCue
+import com.dualsub.tv.subtitle.SubtitleFormat
 import com.dualsub.tv.subtitle.SubtitleParsers
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
@@ -85,7 +86,14 @@ data class PlaybackStats(
     /** 当前倍速。 */
     val rate: Float = 1f,
     /** 码率等流统计文本；尚未起播时为 null。 */
-    val streamSummary: String? = null
+    val streamSummary: String? = null,
+    /**
+     * 输入速率（**字节/秒**），播放界面右上角的「实时网速」用它。
+     *
+     * 只有**网络片源**才显示（本地文件由界面侧直接不显示 —— 「网速」对本地读盘没有意义）。
+     * 尚未起播、或暂停后不再读盘时为 null。
+     */
+    val inputBytesPerSec: Long? = null
 )
 
 /**
@@ -106,7 +114,10 @@ class PlayerViewModel(
     val video: VideoItem
 ) : ViewModel() {
 
-    private val settings = services.settings
+    /**
+     * 设置存取。**公开**：播放页要用它渲染叠加的「AI 字幕配置」层 —— 播放中也能跳过去改配置。
+     */
+    val settings = services.settings
     private val controller = VlcPlayerController(
         appContext,
         cachingMs = runBlocking { services.settings.videoCachingMs.first() }
@@ -158,6 +169,20 @@ class PlayerViewModel(
 
     private val _secondaryCue = MutableStateFlow<SubtitleCue?>(null)
     val secondaryCue: StateFlow<SubtitleCue?> = _secondaryCue.asStateFlow()
+
+    /**
+     * 主字幕当前该显示的那一条。
+     *
+     * **为什么主字幕也有 cue 了**：主字幕原先交给 libVLC 的 libass 渲染，但 vlc-android
+     * 在 Android 上的字体链路我们够不到（它只读 `/system/etc/fonts.xml` 按族名查，
+     * `--freetype-font` 传文件路径无效），在没有中文字体的电视上会整片渲染成方框。
+     * 改成和次字幕一样由 Compose 自绘后，字体走**系统字体栈**，方框问题自然消失，
+     * 而且两路样式/位置统一，能排版避免上下打架。
+     *
+     * 例外：**图片字幕**（PGS / VDBSUB / DVBSUB）自绘画不了位图，仍交给 libVLC。
+     */
+    private val _primaryCue = MutableStateFlow<SubtitleCue?>(null)
+    val primaryCue: StateFlow<SubtitleCue?> = _primaryCue.asStateFlow()
 
     private val _positionMs = MutableStateFlow(0L)
     val positionMs: StateFlow<Long> = _positionMs.asStateFlow()
@@ -245,6 +270,17 @@ class PlayerViewModel(
      */
     private var needDefaultSubtitle = false
 
+    /**
+     * 是否需要「自动给次字幕挑一条」。
+     *
+     * **为什么要有它**：次字幕默认永远是「关闭」——`trySelectDefaultSubtitle()` 只管主字幕，
+     * 于是双字幕开箱即用的场景（主=母语、次=目标语言）根本不会发生，用户得手动进
+     * 「切换到次字幕设置…」选一次。真机实测反馈就是「次字幕不显示」，实际是没选。
+     *
+     * 置位条件与 [needDefaultSubtitle] 对称：本次没有恢复出已保存的次字幕来源。
+     */
+    private var needDefaultSecondary = false
+
     private var tickerJob: Job? = null
     private var errorCheckJob: Job? = null
     @Volatile private var released = false
@@ -298,16 +334,31 @@ class PlayerViewModel(
         val target = ((pendingSeek ?: controller.positionMs()) + deltaMs)
             .let { if (duration > 0) it.coerceIn(0, duration) else it.coerceAtLeast(0) }
         pendingSeek = target
+        // UI 上的时间条**每次按键都更新**，所以手感不受下面的节流影响。
         _positionMs.value = target
-        seekJob?.cancel()
-        seekJob = subtitleScope.launch {
-            controller.seekTo(target)
+
+        // **节流（真机实测必需）**：遥控器长按按每秒钟十几次连发，而每一次 `setTime`
+        // 都会让解码器重新定位、并从网络读回关键帧之前的一整段数据。本地 1080p 看不出
+        // 问题，但 **4K + SMB** 片源上这个读取量会直接把 IO 压死 —— 表现就是「快进卡住」。
+        //
+        // 改成「固定间隔执行一次 + 永远只跳最新目标」：中间那些位置本来也不需要真的停，
+        // 合并掉不减观感，却能把解码器 seek 次数降到原来的三分之一左右。
+        if (previewJob?.isActive == true) return
+        previewJob = subtitleScope.launch {
+            while (isActive) {
+                val t = pendingSeek ?: break
+                controller.seekTo(t)
+                delay(PREVIEW_THROTTLE_MS)
+                if (pendingSeek == t) break      // 目标不再变 → 预览稳定，收工
+            }
         }
     }
 
     /** 长按结束，如果预览前在播放则恢复播放。 */
     fun resumeFromPreview() {
         if (released) return
+        previewJob?.cancel()
+        previewJob = null
         if (_wasPlayingBeforePreview) {
             _wasPlayingBeforePreview = false
             controller.togglePlayPause() // pause → play
@@ -318,6 +369,9 @@ class PlayerViewModel(
     // 长按预览期间是否暂停了播放（供 resumeFromPreview 判断）
     private var _wasPlayingBeforePreview = false
 
+    /** 长按预览的节流任务：见 [seekPreview]。 */
+    private var previewJob: Job? = null
+
     fun seekTo(positionMs: Long) {
         if (released) return
         val duration = controller.durationMs()
@@ -326,7 +380,10 @@ class PlayerViewModel(
         pendingSeekDeadline = android.os.SystemClock.elapsedRealtime() + 5000
         _positionMs.value = target
         seekJob?.cancel()
-        embeddedCues.request(emptySet(), target)
+        // **这里刻意不清空字幕缓存**。原先那行 `embeddedCues.request(emptySet(), target)` 会让
+        // 次字幕在「seek 完成 → 新窗口读回来」之间整段消失（真机上表现为「字幕闪一下没了」）。
+        // 保留旧 cue 是安全的：ticker 是按**新位置**查 `cueAt()` 的，对不上自然不显示，
+        // 对得上正好无缝续上。
         seekJob = subtitleScope.launch {
             delay(200) // Coalesce repeated remote-key presses into one decoder seek.
             controller.seekTo(target)
@@ -543,6 +600,9 @@ class PlayerViewModel(
             if (!primarySelectionMade) applySource(primarySource, forPrimary = true)
             if (!secondarySelectionMade) applySource(secondarySource, forPrimary = false)
             needDefaultSubtitle = !hasPrimarySource && !primarySelectionMade
+            // 次字幕同理：没恢复出已保存的来源时，稍后自动挑一条「与主字幕语言不同」的。
+            // 注意次字幕没有 hasXxxSource 之类的查询，直接看恢复出来的来源是不是 None 即可。
+            needDefaultSecondary = !secondarySelectionMade && secondarySource is SubtitleSource.None
             sourcesRestored = true
             trySelectDefaultSubtitle()
         }
@@ -558,12 +618,28 @@ class PlayerViewModel(
             videoSize = if (size != null) "${size.first}x${size.second}" else "尚未取得",
             volume = controller.volume(),
             rate = controller.rate(),
-            streamSummary = controller.streamStatsText()
+            streamSummary = controller.streamStatsText(),
+            inputBytesPerSec = controller.inputBytesPerSec()
         )
     }
 
     /** 供界面在打开信息层时主动刷新一次快照（码率这类值只在播放中才准）。 */
     fun refreshStatsNow() = refreshStats()
+
+    /**
+     * 只刷新「实时网速」这一个字段。
+     *
+     * 与 [refreshStats] 分开是为了省开销：后者要枚举全部音轨、查分辨率，一次好几个 JNI；
+     * 而网速每秒都要更新，只该付出取一个 `input_bitrate` 的代价。
+     */
+    private fun refreshNetworkSpeed() {
+        if (released) return
+        val speed = controller.inputBytesPerSec()
+        val current = _stats.value
+        if (current.inputBytesPerSec != speed) {
+            _stats.value = current.copy(inputBytesPerSec = speed)
+        }
+    }
 
     // ---------------------------------------------------------------- 容器嗅探
 
@@ -620,10 +696,8 @@ class PlayerViewModel(
     fun selectEmbedded(track: EmbeddedSubtitleReader.TrackInfo, forPrimary: Boolean) {
         setSource(
             SubtitleSource.EmbeddedTrack(
-                // **主字幕必须换成 libVLC 的轨号**：主字幕由 libVLC 渲染，它用的是自己的
-                // spu track id，而这里的 track.index 是 Media3 的全局轨道索引，两者不是一套。
-                // 次字幕走自写解析器，仍用原索引。
-                trackIndex = if (forPrimary) mapToVlcSubtitleTrack(track) ?: track.index else track.index,
+                // Only bitmap primary subtitles use VLC ids; text tracks use Media3 indices.
+                trackIndex = if (forPrimary && track.isBitmap) mapToVlcSubtitleTrack(track) ?: track.index else track.index,
                 mimeType = track.mimeType,
                 language = track.language,
                 label = track.label
@@ -635,22 +709,47 @@ class PlayerViewModel(
     /**
      * 把自写解析器列出的内嵌轨对齐到 libVLC 的字幕轨 id。
      *
-     * 对齐策略：先按语言码（`chi` / `eng` …）匹配；语言码缺失或有歧义（多条同语言）时，
-     * 退回按容器内顺序对齐 —— 两边都是按容器轨道顺序列出的，顺序一致。
+     * **为什么不能只看语言码**：真机踩过 —— 某片源有 3 条 `zh` 轨（简体 / 繁体 / 繁体），
+     * 语言码不唯一时若直接退回「按全局序号对齐」，两套列表序号一旦错位，就会把一个
+     * **不存在**的 id 交给 `setSpuTrack()`，界面直接报「libVLC 选不中该字幕轨」。
+     *
+     * 对齐优先级：
+     * 1. **轨名精确匹配** —— 两边的名字都源自 MKV 的 `Name` 元素（Media3 放进 `label`、
+     *    libVLC 放进 `spuTracks[].name`），这是最可靠的锚点，且要求命中唯一；
+     * 2. 语言码 + **同语言内的相对序号**（比全局序号稳得多）；
+     * 3. 全局序号（最后兜底）。
      */
     private fun mapToVlcSubtitleTrack(track: EmbeddedSubtitleReader.TrackInfo): Int? {
         val candidates = controller.subtitleTrackDetails()
         if (candidates.isEmpty()) return null
 
-        val language = track.language?.takeIf { it.isNotBlank() && it != "und" }
-        if (language != null) {
-            val sameLanguage = candidates.filter { it.language == language }
-            if (sameLanguage.size == 1) return sameLanguage.first().id
+        // ① 轨名精确匹配（唯一命中才采用，否则说明重名，改用下面的序号法）
+        val label = track.label?.takeIf { it.isNotBlank() }
+        if (label != null) {
+            val byName = candidates.filter { it.description == label }
+            if (byName.size == 1) {
+                Log.i(TAG, "主字幕轨对齐：轨名「$label」→ libVLC spu=${byName.first().id}")
+                return byName.first().id
+            }
         }
 
+        // ② 同语言内的相对序号
+        val language = track.language?.takeIf { it.isNotBlank() && it != "und" }
+        if (language != null) {
+            val sameLangLocal = _embeddedTracks.value.filter { it.language == language }
+            val sameLangRemote = candidates.filter { it.language == language }
+            val localOrder = sameLangLocal.indexOfFirst { it.index == track.index }
+            if (localOrder >= 0 && localOrder < sameLangRemote.size) {
+                val mapped = sameLangRemote[localOrder].id
+                Log.i(TAG, "主字幕轨对齐：语言 $language 内第 ${localOrder + 1} 条 → libVLC spu=$mapped")
+                return mapped
+            }
+        }
+
+        // ③ 全局序号兜底
         val order = _embeddedTracks.value.indexOfFirst { it.index == track.index }
         val mapped = candidates.getOrNull(order)?.id
-        Log.i(TAG, "主字幕轨对齐：Media3 index=${track.index} → libVLC spu=$mapped（语言 ${track.language}）")
+        Log.i(TAG, "主字幕轨对齐：全局序号 $order → libVLC spu=$mapped（语言 ${track.language}）")
         return mapped
     }
 
@@ -663,7 +762,10 @@ class PlayerViewModel(
         if (forPrimary) {
             primarySelectionMade = true
             needDefaultSubtitle = false
-        } else secondarySelectionMade = true
+        } else {
+            secondarySelectionMade = true
+            needDefaultSecondary = false
+        }
         viewModelScope.launch {
             if (forPrimary) {
                 settings.setPrimarySource(video.storageKey, source)
@@ -674,17 +776,20 @@ class PlayerViewModel(
         applySource(source, forPrimary)
     }
 
-    private fun applySource(source: SubtitleSource, forPrimary: Boolean) {
+    private fun applySource(savedSource: SubtitleSource, forPrimary: Boolean) {
+        val source = normalizeTextSource(savedSource)
+        lastPublishedEmbeddedState = null
         if (forPrimary) primaryLoadJob?.cancel() else secondaryLoadJob?.cancel()
         updateTrack(forPrimary) {
             it.copy(source = source, cues = emptyList(), error = null, isLoading = source !is SubtitleSource.None)
         }
 
-        // **主次字幕走两条不同的链路**：
-        // - 主字幕交给 libVLC（内嵌轨选轨 / 外挂文件作 slave），由它的 libass 渲染 ——
-        //   这样才拿得到完整 ASS 特效、容器内嵌字体，以及图片字幕（PGS / DVD SPU / 蓝光）。
-        //   代价是主字幕**不再需要 cues**，自绘链路也不再碰它。
-        // - 次字幕仍由自写解析器读成 cues、再由 Compose 叠加层自绘，样式与位置保持可独立调。
+        // **两路字幕现在共用同一条链路**：内嵌 / 外挂字幕都由自写解析器读成 cues，
+        // 再交给 Compose 叠加层自绘 —— 字体走**系统字体栈**，任何能正常显示中文界面的
+        // 电视都能正确渲染，不会再出现方框；两路的样式与位置也能统一排版、避免上下打架。
+        //
+        // 唯一的例外是**图片字幕**（PGS / VOBSUB / DVBSUB）：位图 Compose 画不了，
+        // 仍由 libVLC 选轨渲染（见 applyPrimaryToPlayer）。
         if (forPrimary) {
             primaryLoadJob = applyPrimaryToPlayer(source)
         } else {
@@ -698,36 +803,62 @@ class PlayerViewModel(
     }
 
     /**
-     * 把主字幕交给 libVLC。
+     * 应用主字幕的来源。
      *
-     * - 内嵌轨 → `setSpuTrack()` 选轨；
-     * - 外挂文件 → 先落到应用缓存再作 subtitle slave 挂载；
-     * - 关闭 → `setSpuTrack(-1)`。
+     * **现在主字幕默认走自绘**（与次字幕同一套 Compose 渲染），所以这里的职责变成
+     * 「决定这一路是自绘还是交给 libVLC」：
      *
-     * **`None` 也必须显式处理**：去掉 `no-spu` 之后 libVLC 会按自己的语言偏好自动挑一条
-     * 内嵌字幕轨；用户没选主字幕时那条会凭空出现，和自绘的次字幕叠在一起。
+     * - **文本内嵌轨**（SRT / ASS / SSA）→ 自绘。先把 libVLC 的字幕渲染关掉、再拉字幕窗口；
+     * - **图片内嵌轨**（PGS / VOBSUB / DVBSUB）→ 交给 libVLC 的 `setSpuTrack()`，自绘画不了位图；
+     * - **外挂文件** → 自绘（不再落盘挂 slave）；
+     * - **关闭** → `setSpuTrack(-1)`。
+     *
+     * **关闭也必须显式处理**：去掉 `--no-spu` 之后 libVLC 会按自己的语言偏好自动挑一条
+     * 内嵌字幕轨，用户没选主字幕时那条会凭空冒出来。
+     *
+     * 返回值是「加载任务」，仅外挂文件那条路会真正起协程。
      */
     private fun applyPrimaryToPlayer(source: SubtitleSource): Job? = when (source) {
         SubtitleSource.None -> {
             controller.selectSubtitleTrack(-1)
-            updateTrack(forPrimary = true) { it.copy(isLoading = false) }
+            updateTrack(forPrimary = true) {
+                it.copy(cues = emptyList(), isLoading = false, error = null)
+            }
             null
         }
 
         is SubtitleSource.EmbeddedTrack -> {
-            val ok = controller.selectSubtitleTrack(source.trackIndex)
-            updateTrack(forPrimary = true) {
-                it.copy(isLoading = false, error = if (ok) null else "libVLC 选不中该字幕轨")
+            // **按字幕类型分两条路**：
+            //
+            // - **文本字幕**（SRT / ASS / SSA）→ **走自绘**。原先交给 libVLC 的 libass，
+            //   但在没有中文字体的电视上会整片渲染成方框，而 VLC 在 Android 上的字体链路
+            //   我们够不到。改自绘后字体走系统字体栈，方框消失，且样式/位置与次字幕统一。
+            // - **图片字幕**（PGS / VOBSUB / DVBSUB）→ 位图 Compose 画不了，**仍交 libVLC**。
+            if (SubtitleFormat.isBitmapMime(source.mimeType)) {
+                val ok = controller.selectSubtitleTrack(source.trackIndex)
+                updateTrack(forPrimary = true) {
+                    it.copy(
+                        cues = emptyList(), isLoading = false,
+                        error = if (ok) null else "libVLC 选不中该字幕轨"
+                    )
+                }
+                null
+            } else {
+                // 先关掉 libVLC 自己的字幕渲染，否则它会和自绘的那层叠在一起显示两份。
+                controller.selectSubtitleTrack(-1)
+                updateTrack(forPrimary = true) {
+                    it.copy(cues = emptyList(), isLoading = true, error = null)
+                }
+                // 立刻拉一次窗口；之后 ticker 会持续补读。
+                refreshEmbeddedWindow(pendingSeek ?: controller.positionMs())
+                null
             }
-            null
         }
 
-        is SubtitleSource.ExternalFile -> subtitleScope.launch {
-            val path = withContext(Dispatchers.IO) { stageSubtitleFile(source) }
-            val ok = path != null && controller.addSubtitleFile(path)
-            updateTrack(forPrimary = true) {
-                it.copy(isLoading = false, error = if (ok) null else "libVLC 加载不了该字幕文件")
-            }
+        is SubtitleSource.ExternalFile -> {
+            // 外挂字幕也是文本，一并走自绘（不再挂给 libVLC 作 slave）。
+            controller.selectSubtitleTrack(-1)
+            loadExternal(source, forPrimary = true)
         }
     }
 
@@ -737,6 +868,7 @@ class PlayerViewModel(
      * libVLC 的 subtitle slave 只认它自己能打开的路径 / MRL，**不认 `content://`**
      * （SAF 返回的正是这个），直接传会静默失败。字幕文件很小，放 cacheDir 由系统回收。
      */
+    @Suppress("unused")
     private fun stageSubtitleFile(source: SubtitleSource.ExternalFile): String? = runCatching {
         val extension = source.displayName.substringAfterLast('.', "srt")
         val target = File(appContext.cacheDir, "primary-subtitle-${source.uri.hashCode()}.$extension")
@@ -771,21 +903,49 @@ class PlayerViewModel(
                 }
         }
 
+    /** Repair selections saved when text-primary sources accidentally stored VLC ids. */
+    private fun normalizeTextSource(source: SubtitleSource): SubtitleSource {
+        if (source !is SubtitleSource.EmbeddedTrack || SubtitleFormat.isBitmapMime(source.mimeType)) return source
+        val match = _embeddedTracks.value.singleOrNull { !it.isBitmap && it.label == source.label } ?: return source
+        return if (source.trackIndex == match.index) source else source.copy(trackIndex = match.index)
+    }
+
+    private var lastPublishedEmbeddedState: EmbeddedCueState? = null
+    private var lastPublishedPrimarySource: SubtitleSource? = null
+    private var lastPublishedSecondarySource: SubtitleSource? = null
+
     private fun refreshEmbeddedWindow(position: Long) {
         if (!tracksReady || released) return
-        // 只有次字幕还在自绘链路里 —— 主字幕已交给 libVLC，不参与这里的窗口读取。
-        val selected = setOfNotNull((_secondary.value.source as? SubtitleSource.EmbeddedTrack)?.trackIndex)
+        val selected = listOf(_primary.value.source, _secondary.value.source)
+            .filterIsInstance<SubtitleSource.EmbeddedTrack>()
+            .filterNot { SubtitleFormat.isBitmapMime(it.mimeType) }
+            .map { it.trackIndex }.toSet()
         embeddedCues.request(selected, position)
         publishEmbeddedState(embeddedCues.state.value)
     }
 
+    /**
+     * 把窗口读取结果分发到两路。
+     *
+     * 两路现在共用同一条自写解析链路（主字幕只在「图片轨」时才仍归 libVLC），
+     * 所以更新逻辑对二者完全对称 —— 谁在 [EmbeddedCueState.tracks] 里就更新谁。
+     */
     private fun publishEmbeddedState(state: EmbeddedCueState) {
-        updateTrack(forPrimary = false) { track ->
-            val source = track.source as? SubtitleSource.EmbeddedTrack
-            if (source == null || source.trackIndex !in state.tracks) track else track.copy(
-                cues = state.cues[source.trackIndex].orEmpty(),
-                isLoading = state.isLoading, error = state.error
-            )
+        val primarySource = _primary.value.source
+        val secondarySource = _secondary.value.source
+        if (state === lastPublishedEmbeddedState && primarySource == lastPublishedPrimarySource &&
+            secondarySource == lastPublishedSecondarySource) return
+        lastPublishedEmbeddedState = state
+        lastPublishedPrimarySource = primarySource
+        lastPublishedSecondarySource = secondarySource
+        for (forPrimary in listOf(true, false)) {
+            updateTrack(forPrimary) { track ->
+                val source = track.source as? SubtitleSource.EmbeddedTrack
+                if (source == null || source.trackIndex !in state.tracks) track else track.copy(
+                    cues = state.cues[source.trackIndex].orEmpty(),
+                    isLoading = state.isLoading, error = state.error
+                )
+            }
         }
     }
     private fun deliver(cues: List<SubtitleCue>, forPrimary: Boolean) {
@@ -813,6 +973,15 @@ class PlayerViewModel(
                 }
                 _embeddedTracks.value = tracks
                 tracksReady = true
+                for (primary in listOf(true, false)) {
+                    val old = if (primary) _primary.value.source else _secondary.value.source
+                    val corrected = normalizeTextSource(old)
+                    if (corrected != old) {
+                        applySource(corrected, primary)
+                        if (primary) settings.setPrimarySource(video.storageKey, corrected)
+                        else settings.setSecondarySource(video.storageKey, corrected)
+                    }
+                }
                 _embeddedTrackStatus.value = if (tracks.isEmpty()) "未发现支持的字幕轨" else "${tracks.size} 条"
                 Log.i(TAG, "内嵌字幕轨 ${tracks.size} 条：" +
                     tracks.joinToString { "#${it.index} ${it.format}/${it.language}" })
@@ -824,15 +993,26 @@ class PlayerViewModel(
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Exception) {
+                // 具体异常只进日志：SMB 抛出的 message 里会夹着
+                // `com.hieronymus.protocol.transport.TransportException: Cannot write Signed(…)`
+                // 这种用户看不懂、也照做不了的东西。屏上只给一句能照着做的提示。
                 Log.w(TAG, "读取内嵌字幕轨失败", error)
-                _embeddedTrackStatus.value = "读取失败：${error.message}"
-                _notice.value = "读取内嵌字幕轨失败：${error.message}"
-                failEmbeddedTracks("读取字幕轨失败：${error.message}")
+                _embeddedTrackStatus.value = "读取失败，可点下面「重新读取字幕轨」重试"
+                _notice.value = "读取内嵌字幕轨失败 —— 可在「字幕设置」里点「重新读取字幕轨」"
+                failEmbeddedTracks("读取字幕轨失败，请重试")
             }
         }
     }
 
     fun retryEmbeddedTracks() { if (!released) loadEmbeddedTrackList() }
+
+    /**
+     * 立刻收掉当前提示条。
+     *
+     * 提示条是**自动出现**的（自动选轨、字幕轨读取失败之类），没有"确定"按钮 ——
+     * 用户不想等它就按返回。返回键的层级会先落到这里（见 `PlayerScreen` 的 `BackHandler`）。
+     */
+    fun dismissNotice() { _notice.value = null }
 
     private fun failEmbeddedTracks(message: String) {
         for (primary in listOf(true, false)) updateTrack(primary) { track ->
@@ -841,15 +1021,53 @@ class PlayerViewModel(
         }
     }
 
+    /**
+     * 打开媒体后给两路字幕各挑一条默认轨道。
+     *
+     * - **主字幕**：优先中文，没有就退第一条（原有行为）。
+     * - **次字幕**：挑一条**语言与主字幕不同**的，优先英文 —— 这是双字幕最常见的用法
+     *   （主=母语、次=目标语言）。此前次字幕默认恒为「关闭」，用户会以为功能坏了。
+     *
+     * 两路各自有标志位，**用户保存过的来源不会被覆盖**。
+     */
     private fun trySelectDefaultSubtitle() {
-        if (released || !sourcesRestored || !needDefaultSubtitle) return
+        if (released || !sourcesRestored) return
         val tracks = _embeddedTracks.value.filterNot { it.isBitmap }
-        val preferred = tracks.firstOrNull {
-            val language = it.language?.lowercase().orEmpty()
-            language.startsWith("zh") || language == "chi" || language == "zho"
-        } ?: tracks.firstOrNull() ?: return
-        needDefaultSubtitle = false
-        selectEmbedded(preferred, forPrimary = true)
+        if (tracks.isEmpty()) return
+
+        if (needDefaultSubtitle) {
+            val preferred = tracks.firstOrNull { isChinese(it.language) } ?: tracks.first()
+            needDefaultSubtitle = false
+            selectEmbedded(preferred, forPrimary = true)
+        }
+
+        if (needDefaultSecondary) {
+            // **只挑英文**：双字幕最常用的组合是「主=母语、次=英文」。
+            // 找不到就**保持关闭**，交给用户手动选 —— 不做「退而求其次挑第一条非中文语言」，
+            // 那会在没有英文轨的片源上挑出丹麦语 / 阿拉伯语这种莫名其妙的次字幕
+            //（真机上就出现过次字幕变成 `da` / `ar`）。
+            // 另外要求语言**不同于主字幕**，避免主次两路撞成同一条。
+            val primaryLang = (_primary.value.source as? SubtitleSource.EmbeddedTrack)?.language?.lowercase()
+            val english = tracks.firstOrNull {
+                isEnglish(it.language) && it.language?.lowercase() != primaryLang
+            }
+            if (english != null) {
+                needDefaultSecondary = false
+                selectEmbedded(english, forPrimary = false)
+            }
+        }
+    }
+
+    /** 语言码是否中文（含 ISO 639-1/2 与 BCP-47 写法）。 */
+    private fun isChinese(language: String?): Boolean {
+        val l = language?.lowercase().orEmpty()
+        return l.startsWith("zh") || l == "chi" || l == "zho" || l == "cmn"
+    }
+
+    /** 语言码是否英文。 */
+    private fun isEnglish(language: String?): Boolean {
+        val l = language?.lowercase().orEmpty()
+        return l.startsWith("en") || l == "eng"
     }
 
     /** 按当前片源的 scheme 造一个随机读数据源（用于读内嵌字幕）。 */
@@ -886,19 +1104,23 @@ class PlayerViewModel(
     }
 
     /**
-     * 把 libVLC 当前选中的字幕轨纠正回「我们记录的主字幕源」。
+     * 把 libVLC 当前选中的字幕轨纠正回「我们期望它渲染的那一路」。
      *
-     * 去掉 `no-spu` 之后 VLC 会自己按语言偏好挑一条内嵌字幕轨。只要它挑的不是用户选的
-     * （尤其是用户根本没选主字幕的情形），这里纠正回去。
+     * **改自绘之后，这个函数的职责只剩下图片字幕**：
+     * - **文本字幕**（SRT / ASS / SSA）：已由 Compose 自绘，libVLC 那边必须保持 `-1`（关掉），
+     *   否则它会和自绘的那层叠着显示两份；
+     * - **图片字幕**（PGS / VOBSUB / DVBSUB）：位图我们画不了，仍归 libVLC，这时才需要
+     *   把它自动挑的轨纠正成用户选的那条；
+     * - **外挂字幕**：同样走自绘，libVLC 保持关闭。
      *
-     * 外挂文件不在此列：它由 `addSlave(..., select = true)` 自己接管，硬设 `-1`
-     * 反而会把刚挂上的字幕关掉。
+     * 另外，去掉 `--no-spu` 之后 VLC 会按语言偏好自己挑一条内嵌轨，所以「关闭」也要显式纠正。
      */
     private fun enforcePrimarySubtitleSelection() {
         val want = when (val source = _primary.value.source) {
             SubtitleSource.None -> -1
-            is SubtitleSource.EmbeddedTrack -> source.trackIndex
-            is SubtitleSource.ExternalFile -> return
+            is SubtitleSource.EmbeddedTrack ->
+                if (SubtitleFormat.isBitmapMime(source.mimeType)) source.trackIndex else -1
+            is SubtitleSource.ExternalFile -> -1
         }
         if (controller.currentSubtitleTrackId() != want) {
             Log.i(TAG, "纠正主字幕轨：${controller.currentSubtitleTrackId()} → $want")
@@ -982,7 +1204,8 @@ class PlayerViewModel(
         if (current <= 0) {
             Log.i(TAG, "libVLC 音量为 $current，主动置为 100")
             controller.setVolume(100)
-            _notice.value = "已把播放器音量从 0 调到 100%（遥控音量键调的是电视音量，不控播放器）"
+            // 这里故意**不弹提示**（原先会弹「已把播放器音量从 0 调到 100%…」）：音量是自动
+            // 修好的状态，说出来只会让人以为出了问题；左上角也要留给文件名。排查时看同一句 Log.i。
         }
         refreshStats()
     }
@@ -1034,6 +1257,7 @@ class PlayerViewModel(
     private fun startTicker() {
         tickerJob?.cancel()
         tickerJob = viewModelScope.launch {
+            var lastSpeedPollAt = 0L
             while (isActive) {
                 if (released) break
                 val actualPosition = controller.positionMs()
@@ -1044,8 +1268,17 @@ class PlayerViewModel(
                 val position = pendingSeek ?: actualPosition
                 _positionMs.value = position
                 if (seekJob?.isActive != true) refreshEmbeddedWindow(position)
+                // 两路字幕都由自绘渲染，所以两路都要按当前位置取 cue。
+                _primaryCue.value = _primary.value.cueAt(position)
                 _secondaryCue.value = _secondary.value.cueAt(position)
                 liveSession?.updatePosition(position)
+                // 网速节流到约 1 秒一次：ticker 是 50ms 一跳，而这个值要读 libVLC 的 stats（JNI）。
+                // 每跳都取会把每秒几十次 JNI 的预算吃光，而网速本来也不需要 20Hz 的刷新率。
+                val now = android.os.SystemClock.elapsedRealtime()
+                if (now - lastSpeedPollAt >= SPEED_POLL_INTERVAL_MS) {
+                    lastSpeedPollAt = now
+                    refreshNetworkSpeed()
+                }
                 delay(TICK_INTERVAL_MS)
             }
         }
@@ -1093,8 +1326,20 @@ class PlayerViewModel(
         /** 字幕定位刷新间隔：50ms 约等于 20 次/秒，肉眼足够顺滑且几乎不占 CPU。 */
         const val TICK_INTERVAL_MS = 50L
 
+        /** 「实时网速」的取样间隔。ticker 是 50ms 一跳，网速没必要跟着那么快（理由见 [startTicker]）。 */
+        const val SPEED_POLL_INTERVAL_MS = 1000L
+
         /** 收到 libVLC 报错后等这么久再判定，以便拿到轨道信息写进详情。 */
         const val ERROR_SETTLE_DELAY_MS = 1200L
+
+        /**
+         * 长按快进/退时的 seek 节流间隔。
+         *
+         * 遥控器长按连发约每秒十余次；若每次都真的让解码器跳一次，在 SMB + 4K 片源上
+         * 会把 IO 压死（真机实测「快进卡住」就是这个）。150ms 约合 6~7 次/秒，
+         * 观感仍连贯，但解码器负担降到三分之一左右。
+         */
+        const val PREVIEW_THROTTLE_MS = 150L
 
         const val TAG = "DualSubTV"
     }

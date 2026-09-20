@@ -52,21 +52,8 @@ data class SubtitleTrackDetail(
  * 所以就算自己写一个 Extractor 把容器解出来，拿到的 RealVideo 码流也没有任何电视芯片
  * 能硬解，会重新卡死。libVLC 自带完整 FFmpeg，容器解析与软解码两样都有。
  *
- * **双字幕的分工：主字幕交给 libVLC，次字幕自绘**
- *
- * 主字幕走 libVLC 内建的 libass —— 把 [attachViews] 的「启用字幕 Surface」打开，
- * VLC 就会自己在 `VLCVideoLayout` 里挂一层 `SubtitlesSurfaceView` 渲染字幕。
- * 这样白拿了完整 libass（ASS 特效 / 定位 / 卡拉 OK）、容器内嵌字体提取，
- * 以及自绘层做不到的**图片字幕**（PGS / DVD SPU / 蓝光）。
- *
- * 次字幕仍由 Compose 叠加层自绘 —— 它只需要「显示一行文字」，现有解析链路足够，
- * 而且字号 / 位置 / 描边 / 偏移都能独立调，不受 libVLC 字幕样式的限制。
- *
- * 两路的能力边界（详见 README「双字幕」一节）：
- * - 主字幕的**样式**（字号/颜色/位置）只能在加载媒体时通过 VLC 选项设定，播放中改不了；
- *   **时间偏移例外** —— [setSubtitleDelayMs] 走的是 `setSpuDelay`，是动态的。
- * - 主字幕画在 `VLCVideoLayout` 内部，次字幕画在 Compose 层（即主字幕之上），
- *   所以两路位置重叠时是次字幕盖住主字幕，需要靠布局错开而不是靠层级。
+ * 文本主、次字幕由 Compose 自绘，复用应用的字幕解析与系统字体。
+ * VLC 字幕 Surface 用于自绘层不支持的图片主字幕（PGS / DVD SPU 等）。
  *
  * **硬件解码策略**
  *
@@ -81,7 +68,11 @@ class VlcPlayerController(context: Context, cachingMs: Int = 1500) {
     // （反编译栈显示 LibVLC.java:76 → AbstractList.add → UnsupportedOperationException），
     // 所以不能直接传 listOf(...) 生成的不可变 List —— 那会在打开视频的瞬间崩掉整个 APP。
     // 这里复制一份 ArrayList 再传。
-    private val libVlc = LibVLC(appContext, ArrayList(buildLaunchOptions(cachingMs)))
+    //
+    private val libVlc = LibVLC(
+        appContext,
+        ArrayList(buildLaunchOptions(cachingMs))
+    )
 
     val mediaPlayer = MediaPlayer(libVlc)
 
@@ -364,12 +355,12 @@ class VlcPlayerController(context: Context, cachingMs: Int = 1500) {
 
             // 2) 一条都没挂上 → 直接挂最优
             if (current == null) {
-                return@runCatching if (mediaPlayer.setAudioTrack(best.id)) {
+                // 只记日志、**不弹提示**：这是"兜底自动行为"，用户既没要求、也不需要知道
+                // （真机反馈过：看片时被「原未挂载音轨，已选用…」这条提示条打扰）。
+                if (mediaPlayer.setAudioTrack(best.id)) {
                     Log.i(TAG, "原本未挂载音轨，改用 ${best.codec}")
-                    "原未挂载音轨，已选用「${best.label()}」"
-                } else {
-                    null
                 }
+                return@runCatching null
             }
 
             // 3) 最优明显更通用 → 切过去
@@ -604,6 +595,21 @@ class VlcPlayerController(context: Context, cachingMs: Int = 1500) {
         }.getOrNull()
     }
 
+    /**
+     * 当前输入速率（**字节/秒**），供播放界面右上角的「实时网速」用。
+     *
+     * 取的是 libVLC 的 `input_bitrate`（bit/s）除以 8 —— 当贝那类播放器显示的 `kB/s`
+     * 就是字节速率。**刚起播还没解封装、或暂停后不再读盘时为 null**，界面据此不显示，
+     * 而不是摆一个误导性的 `0.0 kB/s`。
+     */
+    fun inputBytesPerSec(): Long? {
+        if (released) return null
+        return runCatching {
+            val bitrate = mediaPlayer.media?.stats?.inputBitrate ?: return null
+            if (bitrate <= 0f) null else (bitrate / 8f).toLong()
+        }.getOrNull()
+    }
+
     // ---------------------------------------------------------------- 释放
 
     fun release() {
@@ -635,10 +641,9 @@ class VlcPlayerController(context: Context, cachingMs: Int = 1500) {
          * - 保留 VLC 默认的丢迟到帧策略，避免快进或硬解追不上时继续堆积过期帧。
          * - `no-sub-autodetect-file`：禁止 VLC 自动加载「与视频同名的字幕文件」。
          *   主字幕由用户在界面里显式选（内嵌轨或外挂文件），自动加载会抢掉这个选择。
-         *   注意这里**不能再设 `no-spu`** —— 主字幕正是要交给 VLC 的 libass 渲染的
-         *   （见 [attachViews] 与 [addSubtitleFile]）。
-         * - `verbose`：当前是 **2**，为了能看见音频模块选择与直通格式（见下）。
-         *   平时可降回 1 —— 那样只保留警告和错误，日志量更小。
+         *   保留 VLC 字幕能力，用于图片主字幕；文本主、次字幕由 Compose 自绘。
+         * - `verbose=1`：保留警告和错误，减少播放时的调试日志。
+         *   排查音频模块选择、无声或直通问题时临时调回 2（可查看 audio output: using module）。
          * - **不再设 `no-spdif`**：HDMI/SPDIF 直通不再被主动关掉。
          *
          *   **但「打开直通」在这台设备上并不等于拿到了直通** —— 见下面 `aout` 处的实测记录：
@@ -658,12 +663,8 @@ class VlcPlayerController(context: Context, cachingMs: Int = 1500) {
             "--network-caching=1500",
             "--file-caching=1500",
             "--no-sub-autodetect-file",
-            // **verbose 提到 2**：判断「到底有没有在直通」只能靠这几行 ——
-            // `audio output: using module ...`，以及 `aout->start()` 拿到的格式
-            // （直通显示 `'eac3' 48000 3F2R/LFE` 这类，下混则是 `'pcm'`）。
-            // verbose=1 时真机几乎不打它们，等于没法验证。多这点日志不影响播放，
-            // 等音频稳定了再降回 1。
-            "--verbose=2",
+            // Keep warnings/errors; per-frame decoder diagnostics add work on TV hardware.
+            "--verbose=1",
             // **音频输出模块：android_audiotrack 在这台电视上起不来，所以用 OpenSL ES。**
             //
             // 2026-09-17 真机实测（TCL，MTK）：换成 `android_audiotrack` 后**完全无声**，
@@ -680,13 +681,13 @@ class VlcPlayerController(context: Context, cachingMs: Int = 1500) {
             "--aout=opensles_android"
         )
 
-        /** 用指定缓存值替换默认的 1500ms，其余参数保持不变。 */
+        /** 组装 LibVLC 启动参数，替换用户设置的网络和文件缓冲时长。 */
         fun buildLaunchOptions(cachingMs: Int): List<String> {
             if (cachingMs == 1500) return LAUNCH_OPTIONS
             return LAUNCH_OPTIONS.map { opt ->
                 when {
                     opt.startsWith("--network-caching=") -> "--network-caching=$cachingMs"
-                    opt.startsWith("--file-caching=")    -> "--file-caching=$cachingMs"
+                    opt.startsWith("--file-caching=") -> "--file-caching=$cachingMs"
                     else -> opt
                 }
             }

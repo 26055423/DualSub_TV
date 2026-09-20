@@ -22,6 +22,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
@@ -29,8 +30,10 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.tv.material3.Text
@@ -69,10 +72,13 @@ fun SubtitleOverlay(
         return
     }
 
-    val override = cue.assOverride
+    // **能一行就一行；真放不下就按原样换行**（见 [rememberSingleLineCue]）
+    val single = rememberSingleLineCue(cue, style)
+
+    val override = single.assOverride
     if (override == null) {
         SimpleSubtitleOverlay(
-            text = cue.text,
+            text = single.text,
             style = style,
             modifier = modifier,
             onHeightPx = onHeightPx
@@ -81,7 +87,7 @@ fun SubtitleOverlay(
     }
 
     AssSubtitleOverlay(
-        cue = cue,
+        cue = single,
         override = override,
         style = style,
         positionMs = positionMs,
@@ -89,6 +95,62 @@ fun SubtitleOverlay(
         onHeightPx = onHeightPx
     )
 }
+
+/**
+ * **能一行就一行；真放不下就按原样换行。**
+ *
+ * 字幕组在片源里就按语义断好了行（`SubtitleCue.text` 里就是 `\n`），但电视上可用宽度约等于
+ * 屏宽 − 80dp（两条渲染路径的左右内边距各 40dp），一行常放得下三十多个汉字 ——
+ * 那种断行在电视上多是多余的，白占一行画面。
+ *
+ * 所以这里**先实测一次**再决定：
+ * - 把换行并进空格后**只占一行** → 用合并版（单行显示）；
+ * - 合并后仍要折行 → **回到原样**，让字幕组断的行继续断，而不是让 Compose 在别处乱折。
+ *
+ * 合并用**等长替换**（`\n` → 空格，不删字符），这样 `assOverride` 里按字符计数的
+ * span 与卡拉OK偏移不会错位。
+ *
+ * 测量用无动画的基础字号：ASS 的 `\t` 字号动画逐帧变化，拿它去测既贵又不稳。
+ */
+@Composable
+private fun rememberSingleLineCue(cue: SubtitleCue, style: SubtitleStyle): SubtitleCue {
+    // 本来就是单行 → 无事可做
+    if (!cue.text.contains('\n') && !cue.text.contains('\r')) return cue
+
+    val mergedText = remember(cue.text) { cue.text.replace('\n', ' ').replace('\r', ' ') }
+    if (mergedText == cue.text) return cue
+
+    val measurer = rememberTextMeasurer()
+    val density = LocalDensity.current
+    val screenWidthDp = LocalConfiguration.current.screenWidthDp
+    // 与相对定位路径的左右内边距保持一致（各 40dp）
+    val maxWidthPx = remember(screenWidthDp) {
+        with(density) { (screenWidthDp.dp - 80.dp).roundToPx() }
+    }
+    val textStyle = style.toTextStyle()
+
+    val fitsOneLine = remember(mergedText, textStyle, maxWidthPx) {
+        measurer.measure(
+            text = mergedText,
+            style = textStyle,
+            constraints = Constraints(maxWidth = maxWidthPx)
+        ).lineCount <= 1
+    }
+
+    return if (fitsOneLine) cue.copy(text = mergedText) else cue
+}
+
+/** 字幕正文的 [TextStyle] —— 两条渲染路径共用，「能不能放进一行」的测量也用它。 */
+private fun SubtitleStyle.toTextStyle(): TextStyle = TextStyle(
+    color = textColorCompose,
+    fontSize = fontSize,
+    fontWeight = if (bold) FontWeight.Bold else FontWeight.Normal,
+    shadow = Shadow(
+        color = outlineColorCompose,
+        offset = Offset.Zero,
+        blurRadius = outlineWidth * 2f
+    )
+)
 
 // ─────────────────────────────────── 简单路径（无 override）
 
@@ -210,7 +272,7 @@ private fun AssSubtitleOverlay(
                 val highlightColor = if (seg.type == KaraokeType.KO) {
                     style.outlineColorCompose
                 } else {
-                    Color(0xFFFFD54F) // 金黄色高亮
+                    Color(SubtitleStyle.KARAOKE_HIGHLIGHT_ARGB) // 金黄色高亮（字幕渲染语义色）
                 }
                 when {
                     passed -> addStyle(SpanStyle(color = highlightColor), charPos, endChar)

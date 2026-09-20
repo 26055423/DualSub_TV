@@ -25,34 +25,50 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.type
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.tv.material3.Button
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.Text
 import com.dualsub.tv.ui.format.formatTime
-import com.dualsub.tv.ui.theme.BeiPalette
+import com.dualsub.tv.ui.shell.BeiPillButton
+import com.dualsub.tv.ui.theme.BeiDims
+import com.dualsub.tv.ui.theme.BeiGlass
 
 /**
- * 播放控制条：进度、时间、播放/暂停、快进退，以及两路字幕的入口。
+ * 播放控制条：进度、两段时间、以及两路字幕的入口。
  *
- * 播放控制刻意排在字幕入口**上一行** —— 焦点默认落在第一个可聚焦元素上，
- * 这样按遥控器确认键时最常用的操作就是「播放/暂停」，而不是先掉进字幕面板。
+ * 版面排法：**进度条 → 左下「已播放」/ 右下「总时长」→ 字幕入口**。
+ * 两段时间分列进度条两端（而不是挤成一个 `已播 / 总长` 字符串），是为了让「还剩多久」
+ * 一眼可读 —— 电视上隔着三米看，字挤在一起都费劲。
+ *
+ * ## 为什么控制条上没有「播放 / −10s / +10s」这三个按钮
+ *
+ * 这三个操作**遥控器上本来就有键位**，屏上再放一遍纯属重复，还白占一整行高度：
+ * - **OK 键**（`Key.Enter` / `Key.DirectionCenter`）= 播放 / 暂停
+ *   （另有 `MediaPlayPause` / `MediaPlay` / `MediaPause` 媒体键，见 `PlayerScreen` 的按键分支）
+ * - **← / → 短按** = −10s / +10s（长按进逐帧预览）
+ *
+ * 删掉这一行之后，**焦点默认落在「主字幕」上**（它成了第一个可聚焦元素）——
+ * 屏上不再有"看不见的按钮"抢焦点。
+ *
+ * **文件名不在这里**，它由 [PlayerStatusBar] 画在左上角：那是常驻位置，
+ * 而控制条会 6 秒自动隐藏，标题不该跟着一起消失再重排。
  *
  * 进度条本身也可聚焦：焦点移到进度条后，←/→ 方向键触发 onSeekBackward/Forward。
+ *
+ * ## 压在画面上的那条暗渐变
+ *
+ * 底部渐变刻意**收到黑 60%**（规范里"视频画面上叠色上限：黑 ≤ 60%"）：再深就把底部
+ * 画面糊掉了。这条渐变的唯一职责是让控制条的文字在**亮画面上也读得清**，
+ * 不是把下半屏压黑。
  */
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 fun PlayerControls(
-    title: String,
-    isPlaying: Boolean,
     positionMs: Long,
     durationMs: Long,
     primaryLabel: String,
     secondaryLabel: String,
-    onTogglePlayPause: () -> Unit,
     onSeekBackward: () -> Unit,
     onSeekForward: () -> Unit,
     onConfigurePrimary: () -> Unit,
@@ -64,7 +80,7 @@ fun PlayerControls(
             .fillMaxSize()
             .background(
                 Brush.verticalGradient(
-                    colors = listOf(Color.Transparent, Color.Black.copy(alpha = 0.88f))
+                    colors = listOf(Color.Transparent, BeiGlass.Ink.copy(alpha = 0.60f))
                 )
             )
     ) {
@@ -72,17 +88,12 @@ fun PlayerControls(
             modifier = Modifier
                 .align(Alignment.BottomStart)
                 .fillMaxWidth()
-                .padding(horizontal = 40.dp, vertical = 28.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
+                .padding(
+                    horizontal = BeiDims.ScreenStart,
+                    vertical = BeiDims.ScreenVertical
+                ),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            Text(
-                text = title,
-                fontSize = 20.sp,
-                fontWeight = FontWeight.SemiBold,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-
             SeekableProgressBar(
                 positionMs = positionMs,
                 durationMs = durationMs,
@@ -90,31 +101,32 @@ fun PlayerControls(
                 onSeekForward = onSeekForward
             )
 
+            // 进度条下方：**左＝已播放时长，右＝视频总时长**
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "${formatTime(positionMs)} / ${formatTime(durationMs)}",
-                    fontSize = 14.sp
+                    text = formatTime(positionMs),
+                    fontSize = 17.sp,
+                    color = BeiGlass.TextPrimary
                 )
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    ControlButton(if (isPlaying) "暂停" else "播放", onTogglePlayPause)
-                    ControlButton("−10s", onSeekBackward)
-                    ControlButton("+10s", onSeekForward)
-                }
+                Text(
+                    text = formatTime(durationMs),
+                    fontSize = 17.sp,
+                    color = BeiGlass.TextSecondary
+                )
             }
 
+            // 屏上唯一的一排入口：两路字幕。播放控制全在遥控器键位上（见 KDoc）。
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.Start,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    ControlButton("主字幕：$primaryLabel", onConfigurePrimary)
-                    ControlButton("次字幕：$secondaryLabel", onConfigureSecondary)
-                }
+                BeiPillButton(label = "主字幕：$primaryLabel", onClick = onConfigurePrimary)
+                BeiPillButton(label = "次字幕：$secondaryLabel", onClick = onConfigureSecondary)
             }
         }
     }
@@ -138,7 +150,7 @@ private fun SeekableProgressBar(
             .fillMaxWidth()
             .height(6.dp)
             .clip(RoundedCornerShape(3.dp))
-            .background(Color.White.copy(alpha = 0.22f))
+            .background(BeiGlass.Border)
             .focusable()
             .onKeyEvent { event ->
                 if (event.type != KeyEventType.KeyDown) return@onKeyEvent false
@@ -154,15 +166,7 @@ private fun SeekableProgressBar(
             modifier = Modifier
                 .fillMaxWidth(fraction)
                 .fillMaxHeight()
-                .background(BeiPalette.Accent)
+                .background(BeiGlass.Accent)
         )
-    }
-}
-
-@OptIn(ExperimentalTvMaterial3Api::class)
-@Composable
-private fun ControlButton(label: String, onClick: () -> Unit) {
-    Button(onClick = onClick) {
-        Text(text = label, fontSize = 15.sp)
     }
 }

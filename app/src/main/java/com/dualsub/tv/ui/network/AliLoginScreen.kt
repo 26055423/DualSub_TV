@@ -3,6 +3,7 @@ package com.dualsub.tv.ui.network
 import android.graphics.Bitmap
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -21,20 +22,31 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.tv.material3.Button
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.Text
 import com.dualsub.tv.network.webdrive.AliAuthManager
 import com.dualsub.tv.network.webdrive.AliAuthState
+import com.dualsub.tv.ui.shell.BeiPillButton
+import com.dualsub.tv.ui.theme.BeiDims
+import com.dualsub.tv.ui.theme.BeiGlass
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.qrcode.QRCodeWriter
 
+/**
+ * 阿里云盘扫码登录页（外壳之外整屏渲染，见 `AppRoot` 的导航结构）。
+ *
+ * 深墨夜景底 + **无色玻璃面板**（`docs/UI_STYLE_REFERENCE.md`）：面板本身不上色，
+ * 层级靠白 6% 底 + 白 15% 描边表达；状态文字走"白 100% / 60% / 40%"三档，
+ * 只有成功 / 警告 / 错误才短暂借用语义色。
+ *
+ * 二维码那张**白底**是刻意保留的：扫码识别依赖白底黑块，那里不能套玻璃。
+ */
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 fun AliLoginScreen(
@@ -52,30 +64,36 @@ fun AliLoginScreen(
         )
     }
 
+    val panelShape = RoundedCornerShape(BeiDims.CardRadius)
+
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color(0xFF0B0E16)),
+            .background(BeiGlass.Night),
         contentAlignment = Alignment.Center
     ) {
         Column(
+            modifier = Modifier
+                .clip(panelShape)
+                .background(BeiGlass.Glass)
+                .border(BeiDims.Border, BeiGlass.Border, panelShape)
+                .padding(horizontal = 40.dp, vertical = 32.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(20.dp),
-            modifier = Modifier.padding(40.dp)
+            verticalArrangement = Arrangement.spacedBy(20.dp)
         ) {
             Text(
                 text = "登录阿里云盘",
-                fontSize = 28.sp,
+                fontSize = BeiDims.TitleSize,
                 fontWeight = FontWeight.Bold,
-                color = Color.White
+                color = BeiGlass.TextPrimary
             )
 
             when (val s = state) {
                 is AliAuthState.LoggedOut, is AliAuthState.Loading -> {
                     Text(
                         text = "正在获取二维码…",
-                        fontSize = 16.sp,
-                        color = Color(0xFF90A4AE)
+                        fontSize = BeiDims.CardTitleSize,
+                        color = BeiGlass.TextSecondary
                     )
                 }
 
@@ -84,7 +102,7 @@ fun AliLoginScreen(
                     if (bitmap != null) {
                         Box(
                             modifier = Modifier
-                                .background(Color.White, RoundedCornerShape(12.dp))
+                                .background(BeiGlass.QrSurface, RoundedCornerShape(14.dp))
                                 .padding(12.dp)
                         ) {
                             Image(
@@ -96,14 +114,14 @@ fun AliLoginScreen(
                     }
                     Text(
                         text = "请用阿里云盘 App 扫码登录",
-                        fontSize = 16.sp,
-                        color = Color(0xFF90A4AE),
+                        fontSize = BeiDims.CardTitleSize,
+                        color = BeiGlass.TextSecondary,
                         textAlign = TextAlign.Center
                     )
                     Text(
                         text = "扫码后在 App 内点击「确认授权」",
-                        fontSize = 13.sp,
-                        color = Color(0xFF607D8B),
+                        fontSize = BeiDims.BodySize,
+                        color = BeiGlass.TextMuted,
                         textAlign = TextAlign.Center
                     )
                 }
@@ -112,7 +130,7 @@ fun AliLoginScreen(
                     Text(
                         text = "已扫码，请在 App 内确认授权…",
                         fontSize = 18.sp,
-                        color = Color(0xFFFFB74D),
+                        color = BeiGlass.Warning,
                         textAlign = TextAlign.Center
                     )
                 }
@@ -121,7 +139,7 @@ fun AliLoginScreen(
                     Text(
                         text = "授权成功！正在进入…",
                         fontSize = 18.sp,
-                        color = Color(0xFF66BB6A),
+                        color = BeiGlass.Success,
                         textAlign = TextAlign.Center
                     )
                 }
@@ -132,15 +150,13 @@ fun AliLoginScreen(
                 Text(
                     text = "⚠ $err",
                     fontSize = 14.sp,
-                    color = Color(0xFFFF8A80),
+                    color = BeiGlass.Danger,
                     textAlign = TextAlign.Center
                 )
             }
 
             Spacer(Modifier.height(8.dp))
-            Button(onClick = onCancel) {
-                Text("取消", fontSize = 14.sp)
-            }
+            BeiPillButton(label = "取消", onClick = onCancel)
         }
     }
 }

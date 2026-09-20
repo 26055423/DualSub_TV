@@ -55,6 +55,7 @@ class SmbMediaDataSource(
 
     /** 已缓存块占用的总字节数，用于淘汰。 */
     private var cachedBytes = 0
+    private var nextSequentialBlock = -1L
 
     /**
      * 块号 → 块内容。[accessOrder] = true 使其成为 LRU：
@@ -108,9 +109,10 @@ class SmbMediaDataSource(
         blocks[blockIndex]?.let { return it }
 
         val start = blockIndex * blockSize
-        val wanted = resolveWanted(start, blockSize) ?: return null
-        if (wanted <= 0) return null
-
+        // Consecutive misses mean metadata/index traversal. Batch those reads only;
+        // random subtitle/video jumps retain small blocks instead of downloading video payload.
+        val fetchSize = if (blockIndex == nextSequentialBlock) maxOf(blockSize, 64 * 1024) else blockSize
+        val wanted = resolveWanted(start, fetchSize) ?: return null
         val storage = ByteArray(wanted)
         val opened = handle()
         val read = readFullyAt(start, storage, 0, wanted) { target, pos, off, count ->
@@ -120,14 +122,34 @@ class SmbMediaDataSource(
         if (read < wanted && size >= 0) {
             throw java.io.EOFException("SMB 文件提前结束：位置 $start，预期 $wanted 字节，实际 $read")
         }
-
-        val entry = CachedBlock(storage, minOf(read, wanted))
-        cachedBytes += storage.size
-        blocks[blockIndex] = entry
-        return entry
+        var offset = 0
+        var index = blockIndex
+        while (offset < read) {
+            val length = minOf(blockSize, read - offset)
+            val bytes = storage.copyOfRange(offset, offset + length)
+            blocks.remove(index)?.let { cachedBytes -= it.bytes.size }
+            cachedBytes += length
+            blocks[index] = CachedBlock(bytes, length)
+            offset += length
+            index++
+        }
+        nextSequentialBlock = index
+        return blocks[blockIndex]
     }
 
     override fun readAt(position: Long, buffer: ByteArray, offset: Int, length: Int): Int {
+        return try {
+            readAtOnce(position, buffer, offset, length)
+        } catch (error: Throwable) {
+            // 共享句柄失效（SMB 重连 / 池被 invalidate）后，缓存里的 File 就不再可用 ——
+            // 这正是真机上「打开文件失败：DiskShare has already been closed」的来源。
+            // 丢掉句柄重新打开一次再试，避免一次重连就把整条字幕读取链报废。
+            close()
+            readAtOnce(position, buffer, offset, length)
+        }
+    }
+
+    private fun readAtOnce(position: Long, buffer: ByteArray, offset: Int, length: Int): Int {
         if (length == 0) return 0
         if (position < 0) return -1
 
@@ -161,12 +183,22 @@ class SmbMediaDataSource(
         return if (written > 0) written else -1
     }
 
-    override fun getSize(): Long { handle(); return size }
+    override fun getSize(): Long {
+        return try {
+            handle()
+            size
+        } catch (error: Throwable) {
+            close()
+            handle()
+            size
+        }
+    }
 
     override fun close() {
         runCatching { file?.close() }
         file = null
         blocks.clear()
         cachedBytes = 0
+        nextSequentialBlock = -1
     }
 }

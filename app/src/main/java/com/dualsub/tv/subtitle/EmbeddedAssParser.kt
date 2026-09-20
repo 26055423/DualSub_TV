@@ -14,7 +14,8 @@ class EmbeddedAssParser(initializationData: List<ByteArray>) {
 
     fun parse(bytes: ByteArray, sampleTimeUs: Long): List<SubtitleCue> {
         // Media3 prepends relative start/end times to ReadOrder,Layer,...,Text.
-        val raw = SubtitleTextDecoder.decode(bytes).trimEnd('\u0000', '\r', '\n')
+        val decoded = SubtitleTextDecoder.decode(bytes).trimEnd('\u0000', '\r', '\n')
+        val raw = if (decoded.startsWith("Dialogue:", ignoreCase = true)) decoded.substringAfter(':').trimStart() else decoded
         // MatroskaExtractor 1.6 writes H:MM:SS:cc (colon before centiseconds).
         // Normalize only the two leading timestamps, never the dialogue text.
         val dialogue = raw.split(',', limit = 3).let { parts ->
@@ -25,7 +26,7 @@ class EmbeddedAssParser(initializationData: List<ByteArray>) {
             }
         }
         val offsetMs = sampleTimeUs / 1000
-        // AssParser only recognises lines starting with "Dialogue: "; Matroska samples omit this prefix.
+        // Normalize to exactly one Dialogue prefix; adapters can supply either representation.
         return AssParser.parse(prefix + "Dialogue: " + dialogue).map { cue ->
             cue.copy(startMs = offsetMs + cue.startMs, endMs = offsetMs + cue.endMs)
         }

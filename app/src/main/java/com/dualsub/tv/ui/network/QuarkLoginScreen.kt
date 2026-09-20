@@ -3,6 +3,7 @@ package com.dualsub.tv.ui.network
 import android.graphics.Bitmap
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -21,17 +22,19 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.tv.material3.Button
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.Text
 import com.dualsub.tv.network.webdrive.QuarkAuthManager
 import com.dualsub.tv.network.webdrive.QuarkAuthState
+import com.dualsub.tv.ui.shell.BeiPillButton
+import com.dualsub.tv.ui.theme.BeiDims
+import com.dualsub.tv.ui.theme.BeiGlass
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.EncodeHintType
 import com.google.zxing.qrcode.QRCodeWriter
@@ -41,6 +44,9 @@ import com.google.zxing.qrcode.QRCodeWriter
  *
  * TV 屏幕展示二维码，用户用手机夸克 App 扫码授权。
  * 授权成功后调用 [onSuccess]，携带获得的 Cookie 字符串。
+ *
+ * 视觉与 [AliLoginScreen] / [BaiduLoginScreen] 一致：深墨夜景底 + 无色玻璃面板 +
+ * 白三档文字；二维码那张白底是刻意保留的（扫码识别依赖白底黑块）。
  */
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
@@ -67,30 +73,36 @@ fun QuarkLoginScreen(
         )
     }
 
+    val panelShape = RoundedCornerShape(BeiDims.CardRadius)
+
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color(0xFF0B0E16)),
+            .background(BeiGlass.Night),
         contentAlignment = Alignment.Center
     ) {
         Column(
+            modifier = Modifier
+                .clip(panelShape)
+                .background(BeiGlass.Glass)
+                .border(BeiDims.Border, BeiGlass.Border, panelShape)
+                .padding(horizontal = 40.dp, vertical = 32.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(16.dp),
-            modifier = Modifier.padding(40.dp)
+            verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             Text(
                 text = "登录夸克网盘",
-                fontSize = 28.sp,
+                fontSize = BeiDims.TitleSize,
                 fontWeight = FontWeight.Bold,
-                color = Color.White
+                color = BeiGlass.TextPrimary
             )
 
             when (val s = state) {
                 is QuarkAuthState.LoggedOut, is QuarkAuthState.Loading -> {
                     Text(
                         text = "正在获取二维码…",
-                        fontSize = 16.sp,
-                        color = Color(0xFF90A4AE)
+                        fontSize = BeiDims.CardTitleSize,
+                        color = BeiGlass.TextSecondary
                     )
                 }
 
@@ -99,7 +111,7 @@ fun QuarkLoginScreen(
                     if (bitmap != null) {
                         Box(
                             modifier = Modifier
-                                .background(Color.White, RoundedCornerShape(12.dp))
+                                .background(BeiGlass.QrSurface, RoundedCornerShape(14.dp))
                                 .padding(12.dp)
                         ) {
                             Image(
@@ -111,14 +123,14 @@ fun QuarkLoginScreen(
                     }
                     Text(
                         text = "请用手机夸克 App 扫描上方二维码",
-                        fontSize = 16.sp,
-                        color = Color(0xFF90A4AE),
+                        fontSize = BeiDims.CardTitleSize,
+                        color = BeiGlass.TextSecondary,
                         textAlign = TextAlign.Center
                     )
                     Text(
                         text = "扫码后在手机上确认授权",
-                        fontSize = 14.sp,
-                        color = Color(0xFF607D8B),
+                        fontSize = BeiDims.BodySize,
+                        color = BeiGlass.TextMuted,
                         textAlign = TextAlign.Center
                     )
                 }
@@ -127,7 +139,7 @@ fun QuarkLoginScreen(
                     Text(
                         text = "已扫码，请在手机上确认授权…",
                         fontSize = 18.sp,
-                        color = Color(0xFFFFD54F),
+                        color = BeiGlass.Warning,
                         textAlign = TextAlign.Center
                     )
                 }
@@ -136,7 +148,7 @@ fun QuarkLoginScreen(
                     Text(
                         text = "授权成功！正在进入…",
                         fontSize = 18.sp,
-                        color = Color(0xFF66BB6A),
+                        color = BeiGlass.Success,
                         textAlign = TextAlign.Center
                     )
                 }
@@ -147,15 +159,13 @@ fun QuarkLoginScreen(
                 Text(
                     text = "⚠ $err",
                     fontSize = 14.sp,
-                    color = Color(0xFFFF8A80),
+                    color = BeiGlass.Danger,
                     textAlign = TextAlign.Center
                 )
             }
 
             Spacer(Modifier.height(8.dp))
-            Button(onClick = onCancel) {
-                Text("取消", fontSize = 14.sp)
-            }
+            BeiPillButton(label = "取消", onClick = onCancel)
         }
     }
 }

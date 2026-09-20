@@ -1,16 +1,21 @@
 package com.dualsub.tv.ui.network
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -31,8 +36,11 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
@@ -43,8 +51,6 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.tv.material3.Button
-import androidx.tv.material3.Card
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.Text
 import com.dualsub.tv.core.AppServices
@@ -54,6 +60,10 @@ import com.dualsub.tv.network.RemoteLocation
 import com.dualsub.tv.network.RemoteType
 import com.dualsub.tv.network.smb.SmbSession
 import com.dualsub.tv.network.smb.SmbShareLister
+import com.dualsub.tv.ui.shell.BeiCard
+import com.dualsub.tv.ui.shell.BeiPillButton
+import com.dualsub.tv.ui.theme.BeiDims
+import com.dualsub.tv.ui.theme.BeiGlass
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -62,6 +72,10 @@ import kotlinx.coroutines.withContext
  * 网络目录浏览。SMB 与 DLNA 共用这一页 —— 差别都被 [com.dualsub.tv.network.RemoteBrowser] 吸收掉了。
  *
  * 用「路径栈」而不是字符串父路径来逐级前进/后退，因为 DLNA 的目录标识是 ObjectID，没有层级语义。
+ *
+ * 视觉：深墨夜景底 + 玻璃行卡；目录项前面那个小图标是**自绘**的，
+ * **不再用 📁 / ▶ emoji** —— 不同电视对 emoji 的字形覆盖不一样，缺字就是一个方框
+ * （本项目刚在字幕方框上踩过这个坑），自绘的几何图形在任何设备上都一样。
  */
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
@@ -87,9 +101,12 @@ fun RemoteBrowseScreen(
                 entries = it
                 loading = false
             }
-            .onFailure {
+            .onFailure { failure ->
                 entries = emptyList()
-                error = it.message ?: "读取目录失败"
+                // 详情只进日志：SMB 抛出的 message 里可能夹着 TransportException 之类的类全名，
+                // 用户看不懂、也照做不了。屏上只给一句能照着做的。
+                android.util.Log.w("DualSubTV", "读取目录失败：$currentPath", failure)
+                error = "读取目录失败 —— 连接可能已断开，返回后重进即可重试"
                 loading = false
             }
     }
@@ -106,49 +123,57 @@ fun RemoteBrowseScreen(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color(0xFF0B0E16))
-            .padding(horizontal = 40.dp, vertical = 28.dp),
+            .background(BeiGlass.Night)
+            .padding(
+                horizontal = BeiDims.ScreenStart,
+                vertical = BeiDims.ScreenVertical
+            ),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         Text(
             text = location.displayName,
-            fontSize = 26.sp,
+            fontSize = BeiDims.TitleSize,
             fontWeight = FontWeight.Bold,
+            color = BeiGlass.TextPrimary,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis
         )
         Text(
             text = if (currentPath.isBlank()) "根目录" else currentPath,
-            fontSize = 13.sp,
-            color = Color(0xFF90A4AE),
+            fontSize = BeiDims.BodySize,
+            color = BeiGlass.TextSecondary,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis
         )
 
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            Button(
-                onClick = { if (stack.size > 1) stack.removeAt(stack.lastIndex) },
-                enabled = stack.size > 1
-            ) { Text("上一级", fontSize = 15.sp) }
-            Button(onClick = onExit) { Text("返回", fontSize = 15.sp) }
+            BeiPillButton(
+                label = "上一级",
+                onClick = { if (stack.size > 1) stack.removeAt(stack.lastIndex) }
+            )
+            BeiPillButton(label = "返回", onClick = onExit)
         }
 
         error?.let {
-            Text(text = "⚠ $it", fontSize = 14.sp, color = Color(0xFFFF8A80))
+            Text(
+                text = "⚠ $it",
+                fontSize = 14.sp,
+                color = BeiGlass.Danger
+            )
         }
 
         when {
             loading -> Text(
                 text = "正在读取…",
                 fontSize = 15.sp,
-                color = Color(0xFFB0BEC5),
+                color = BeiGlass.TextSecondary,
                 modifier = Modifier.padding(top = 8.dp)
             )
 
             entries.isEmpty() && error == null -> Text(
                 text = "这个目录里没有可播放的内容。",
                 fontSize = 15.sp,
-                color = Color(0xFFB0BEC5),
+                color = BeiGlass.TextSecondary,
                 modifier = Modifier.padding(top = 8.dp)
             )
 
@@ -158,7 +183,7 @@ fun RemoteBrowseScreen(
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 items(entries, key = { it.location + it.name }) { entry ->
-                    Card(
+                    BeiCard(
                         onClick = {
                             if (entry.isDirectory) {
                                 stack.add(entry.location)
@@ -175,29 +200,77 @@ fun RemoteBrowseScreen(
                                     )
                                 }
                             }
-                        }
+                        },
+                        padding = PaddingValues(horizontal = 16.dp, vertical = 10.dp)
                     ) {
                         Row(
-                            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                            modifier = Modifier.fillMaxWidth(),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
-                            Text(
-                                text = (if (entry.isDirectory) "📁  " else "▶  ") + entry.name,
-                                fontSize = 16.sp,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.weight(1f)
-                            )
+                            Row(
+                                modifier = Modifier.weight(1f),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
+                                EntryGlyph(isDirectory = entry.isDirectory)
+                                Text(
+                                    text = entry.name,
+                                    fontSize = BeiDims.CardTitleSize,
+                                    color = BeiGlass.TextPrimary,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
                             Text(
                                 text = if (entry.isDirectory) "目录" else formatSize(entry.sizeBytes),
-                                fontSize = 12.sp,
-                                color = Color(0xFF90A4AE)
+                                fontSize = BeiDims.CaptionSize,
+                                color = BeiGlass.TextSecondary
                             )
                         }
                     }
                 }
             }
+        }
+    }
+}
+
+/**
+ * 目录 / 文件的小图标 —— **自绘，不用 emoji**。
+ *
+ * 理由与导航图标相同：电视上 emoji 的字形覆盖差异很大，缺字就是一个方框；
+ * 自绘的几何图形在所有设备上都一样，而且能直接用唯一强调色。
+ */
+@Composable
+private fun EntryGlyph(isDirectory: Boolean) {
+    Canvas(modifier = Modifier.size(BeiDims.IconStatus)) {
+        val w = size.width
+        val h = size.height
+        val stroke = w * 0.10f
+        val ink = BeiGlass.Accent
+        if (isDirectory) {
+            // 文件夹：一个带标签口的矩形轮廓
+            drawRoundRect(
+                color = ink,
+                topLeft = Offset(w * 0.06f, h * 0.24f),
+                size = Size(w * 0.88f, h * 0.58f),
+                cornerRadius = androidx.compose.ui.geometry.CornerRadius(w * 0.10f),
+                style = Stroke(width = stroke)
+            )
+            drawLine(ink, Offset(w * 0.22f, h * 0.24f), Offset(w * 0.34f, h * 0.10f), stroke)
+            drawLine(ink, Offset(w * 0.34f, h * 0.10f), Offset(w * 0.52f, h * 0.10f), stroke)
+            drawLine(ink, Offset(w * 0.52f, h * 0.10f), Offset(w * 0.60f, h * 0.24f), stroke)
+        } else {
+            // 文件：播放三角
+            drawPath(
+                path = Path().apply {
+                    moveTo(w * 0.26f, h * 0.14f)
+                    lineTo(w * 0.82f, h * 0.50f)
+                    lineTo(w * 0.26f, h * 0.86f)
+                    close()
+                },
+                color = ink
+            )
         }
     }
 }
@@ -325,25 +398,33 @@ fun SmbServerForm(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color(0xFF0B0E16))
+            .background(BeiGlass.Night)
     ) {
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
                 .imePadding(),
-            contentPadding = PaddingValues(horizontal = 60.dp, vertical = 36.dp),
+            contentPadding = PaddingValues(
+                horizontal = BeiDims.ScreenStart,
+                vertical = BeiDims.ScreenVertical
+            ),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             item(key = "title") {
-                Text(text = title, fontSize = 24.sp, fontWeight = FontWeight.Bold)
+                Text(
+                    text = title,
+                    fontSize = BeiDims.TitleSize,
+                    fontWeight = FontWeight.Bold,
+                    color = BeiGlass.TextPrimary
+                )
             }
 
             item(key = "hint") {
                 Text(
                     text = "填好主机和账号后点「列出共享」，会直接读取服务器上的共享文件夹；" +
                         "若服务器禁止枚举，会自动退化为尝试常见共享名。也可以直接手工填写。",
-                    fontSize = 12.sp,
-                    color = Color(0xFF90A4AE)
+                    fontSize = BeiDims.CaptionSize,
+                    color = BeiGlass.TextSecondary
                 )
             }
 
@@ -364,11 +445,16 @@ fun SmbServerForm(
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Button(onClick = { loadShares() }, enabled = host.isNotBlank() && !listing) {
-                        Text(if (listing) "正在连接…" else "列出共享", fontSize = 15.sp)
-                    }
+                    BeiPillButton(
+                        label = if (listing) "正在连接…" else "列出共享",
+                        onClick = { if (host.isNotBlank() && !listing) loadShares() }
+                    )
                     if (shares.isNotEmpty()) {
-                        Text(text = "点选下面任意一项即可", fontSize = 13.sp, color = Color(0xFF90A4AE))
+                        Text(
+                            text = "点选下面任意一项即可",
+                            fontSize = BeiDims.BodySize,
+                            color = BeiGlass.TextSecondary
+                        )
                     }
                 }
             }
@@ -377,9 +463,10 @@ fun SmbServerForm(
                 item(key = "shares") {
                     LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         items(shares, key = { it }) { name ->
-                            Button(onClick = { shareField = name.asFieldValueAtEnd() }) {
-                                Text(text = if (name == share) "✓ $name" else name, fontSize = 14.sp)
-                            }
+                            BeiPillButton(
+                                label = if (name == share) "✓ $name" else name,
+                                onClick = { shareField = name.asFieldValueAtEnd() }
+                            )
                         }
                     }
                 }
@@ -391,7 +478,7 @@ fun SmbServerForm(
 
             error?.let { message ->
                 item(key = "error") {
-                    Text(text = "⚠ $message", fontSize = 14.sp, color = Color(0xFFFF8A80))
+                    Text(text = "⚠ $message", fontSize = 14.sp, color = BeiGlass.Danger)
                 }
             }
 
@@ -401,10 +488,11 @@ fun SmbServerForm(
                     modifier = Modifier.padding(top = 4.dp),
                     horizontalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    Button(onClick = { save() }, enabled = canSave) {
-                        Text("保存", fontSize = 15.sp)
-                    }
-                    Button(onClick = onCancel) { Text("取消", fontSize = 15.sp) }
+                    BeiPillButton(
+                        label = "保存",
+                        onClick = { if (canSave) save() }
+                    )
+                    BeiPillButton(label = "取消", onClick = onCancel)
                 }
             }
         }
@@ -426,13 +514,13 @@ private fun LabeledField(
 ) {
     val keyboard = LocalSoftwareKeyboardController.current
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Text(text = label, fontSize = 13.sp, color = Color(0xFFB0BEC5))
+        Text(text = label, fontSize = BeiDims.BodySize, color = BeiGlass.TextSecondary)
         BasicTextField(
             value = value,
             onValueChange = onValueChange,
             singleLine = true,
-            textStyle = TextStyle(color = Color.White, fontSize = 16.sp),
-            cursorBrush = SolidColor(Color.White),
+            textStyle = TextStyle(color = BeiGlass.TextPrimary, fontSize = 16.sp),
+            cursorBrush = SolidColor(BeiGlass.AccentBright),
             visualTransformation = if (isPassword) {
                 PasswordVisualTransformation()
             } else {
@@ -441,8 +529,9 @@ private fun LabeledField(
             modifier = Modifier
                 .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
                 .fillMaxWidth()
-                .clip(RoundedCornerShape(8.dp))
-                .background(Color(0xFF1E2635))
+                .clip(RoundedCornerShape(12.dp))
+                .background(BeiGlass.Glass)
+                .border(BeiDims.Border, BeiGlass.Border, RoundedCornerShape(12.dp))
                 .padding(horizontal = 14.dp, vertical = 12.dp)
                 // 遥控器把焦点移到输入框时直接唤起软键盘，省掉「再按一次确认」的摸索
                 .onFocusChanged { if (it.isFocused) keyboard?.show() }

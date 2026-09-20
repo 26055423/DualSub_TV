@@ -42,7 +42,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
@@ -57,6 +56,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import com.dualsub.tv.ui.theme.BeiGlass
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.Text
 import com.dualsub.tv.core.InAppLog
@@ -65,12 +65,20 @@ import com.dualsub.tv.ui.format.formatOffset
 import com.dualsub.tv.ui.format.formatTime
 import com.dualsub.tv.ui.player.components.AiSubtitleProgressOverlay
 import com.dualsub.tv.ui.player.components.MenuEntry
+import com.dualsub.tv.ui.player.components.PICKER_COLUMNS
+import com.dualsub.tv.ui.player.components.PlayerChoicePickerOverlay
 import com.dualsub.tv.ui.player.components.PlayerControls
+import com.dualsub.tv.ui.player.components.PlayerExitConfirmOverlay
 import com.dualsub.tv.ui.player.components.PlayerMenuGroup
 import com.dualsub.tv.ui.player.components.PlayerMenuOverlay
 import com.dualsub.tv.ui.player.components.PlayerInfoOverlay
+import com.dualsub.tv.ui.player.components.PlayerStatusBar
 import com.dualsub.tv.ui.player.components.SubtitleOverlay
 import com.dualsub.tv.ui.player.components.selectableIndices
+import com.dualsub.tv.ui.settings.AiSettingsScreen
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.videolan.libvlc.util.VLCVideoLayout
@@ -78,15 +86,17 @@ import org.videolan.libvlc.util.VLCVideoLayout
 /**
  * 播放页。
  *
- * 层次自下而上：视频画布（[VLCVideoLayout]，**主字幕由 libVLC 的 libass 画在它内部**）
- * → 次字幕层（Compose）→ 控制条 / 侧边菜单 / 提示层。
+ * 层次自下而上：视频画布（[VLCVideoLayout]）→ **两路字幕的自绘层**（Compose）
+ * → 控制条 / 侧边菜单 / 提示层 / 退出确认框。
  *
- * **两路字幕走两条不同的链路**（这是本项目的核心设计，别改回去）：
- * - **主字幕交给 libVLC 渲染** —— 换来完整 libass（ASS 特效 / 定位 / 卡拉 OK）、容器内嵌
- *   字体提取，以及自绘层做不到的图片字幕（PGS / DVD SPU / 蓝光）。代价是它的字号 / 位置 /
- *   描边由 libass 说了算，只有**时间偏移**能动态调（`setSpuDelay`）。
- * - **次字幕由 Compose 叠加层自绘** —— 它只需要显示一行文字，字号 / 底部距离 / 描边 /
- *   时间偏移都能独立调。
+ * **两路文本字幕都走 Compose 自绘**（这是本项目的核心设计，别改回去）：
+ * - **文本字幕（主 / 次）由 `SubtitleOverlay` 自绘** —— 字号 / 颜色 / 描边 / 底部距离 /
+ *   时间偏移都能各自独立调；而且中文走 Compose 的系统字体栈，**不会出现方框（tofu）**。
+ *   主字幕**早先是交给 libVLC 的 libass 渲染的** —— 真机上中文字幕整片渲染成方框，才改成自绘。
+ * - **唯一的例外是图片字幕**（PGS / DVD SPU / 蓝光）：位图 Compose 画不了，仍交 libVLC
+ *   渲染在 `VLCVideoLayout` 内部；此时 `primaryCue` 恒为 null，上面那层自然不画。
+ *
+ * 代价要认：自绘拿不到 libass 的完整 ASS 排版（矢量绘图、复杂动画组、精细的 `\pos` / `\move`）。
  *
  * 两路的避让靠**位置错开**：次字幕画在 Compose 层、天然盖在主字幕之上，所以位置重叠时
  * 不靠层级，而是由用户把次字幕的「底部距离」按主字幕实际高度调大（字幕设置面板里）。
@@ -119,6 +129,8 @@ fun PlayerScreen(
     val context = LocalContext.current
     val primary by viewModel.primary.collectAsState()
     val secondary by viewModel.secondary.collectAsState()
+    // 两路字幕都由自绘渲染，所以两路都有「当前该显示的那一条」。
+    val primaryCue by viewModel.primaryCue.collectAsState()
     val secondaryCue by viewModel.secondaryCue.collectAsState()
     val isPlaying by viewModel.isPlaying.collectAsState()
     val positionMs by viewModel.positionMs.collectAsState()
@@ -134,6 +146,11 @@ fun PlayerScreen(
     // libVLC 的只读快照（音轨/分辨率/音量/倍速）—— 组合期只读它，不再直接调 JNI
     val stats by viewModel.stats.collectAsState()
     val aiSubtitleState by viewModel.aiSubtitleState.collectAsState()
+
+    // 右上角的「实时网速」：**只对网络片源显示** —— 本地文件的读盘速率不是「网速」，
+    // 摆一个恒定的数字只会误导。真正的取值在 ViewModel 的 ticker 里每秒做一次。
+    val isRemoteSource = viewModel.video.uri.scheme?.let { it != "file" && it != "content" } ?: false
+    val networkSpeedText = if (isRemoteSource) stats.inputBytesPerSec?.let(::formatSpeed) else null
 
     var showControls by remember { mutableStateOf(true) }
     var pickForPrimary by remember { mutableStateOf(true) }
@@ -151,11 +168,32 @@ fun PlayerScreen(
     // 按上/下显示的播放信息层（当前音轨/字幕轨/视频格式/码率…）
     var infoOverlay by remember { mutableStateOf(false) }
 
+    // 右上角的当前时间（24 小时制）。与播放位置无关，所以在界面这一层每秒刷一次，
+    // 不走 ViewModel 那个 50ms 的 ticker。
+    val clockFormat = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
+    var clockText by remember { mutableStateOf(clockFormat.format(Date())) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            clockText = clockFormat.format(Date())
+            delay(CLOCK_TICK_MS)
+        }
+    }
+
     // ---- 侧边菜单状态
     var menuOpen by remember { mutableStateOf(false) }
     var menuGroup by remember { mutableStateOf(0) }
-    var menuEntry by remember { mutableStateOf(0) }          // 在「可选项」序列里的下标
+    var menuEntry by remember { mutableStateOf(0) }          // 二级里选中的 entries 原始下标
     var menuFocusDeep by remember { mutableStateOf(false) }  // 焦点是否已进入二级面板
+    // 「选择页」—— 条目太多时（内嵌字幕轨常有几十条）改用整页弹出选择。
+    // 它盖在菜单之上，选完 / 取消后回到菜单，方便接着调别的。
+    var pickerOpen by remember { mutableStateOf(false) }
+    var pickerTitle by remember { mutableStateOf("") }
+    var pickerEntries by remember { mutableStateOf<List<MenuEntry>>(emptyList()) }
+    var pickerIndex by remember { mutableStateOf(0) }
+    // 数值项的「激活调节」态：激活后 ←/→ 直接调值，OK / 返回退出
+    var adjustActive by remember { mutableStateOf(false) }
+    // AI 字幕配置层（压在画面上，不退出播放）
+    var aiConfigOpen by remember { mutableStateOf(false) }
 
     // 焦点握在自己手里，按键才一定到这个 Box
     val focusRequester = remember { FocusRequester() }
@@ -214,7 +252,7 @@ fun PlayerScreen(
     }
 
     // ---- 组装侧边菜单的五个分组（全部数据取自 stats / State，无 JNI）
-    val menuGroups = buildMenuGroups(
+    val menuGroups = if (menuOpen) buildMenuGroups(
         viewModel = viewModel,
         stats = stats,
         primary = primary,
@@ -238,22 +276,61 @@ fun PlayerScreen(
         subtitlePage = subtitlePage,
         onSubtitlePageChange = { subtitlePage = it },
         onShowLog = { menuOpen = false; logOverlay = true },
+        onOpenAiSettings = { menuOpen = false; aiConfigOpen = true },
+        onOpenTrackPicker = { choices, pickerName ->
+            pickerEntries = choices
+            pickerTitle = pickerName
+            // 打开时高亮「当前正在用的那一条」，而不是从头开始
+            val selectable = choices.selectableIndices()
+            val currentPos = selectable.indexOfFirst { idx ->
+                (choices[idx] as? MenuEntry.Choice)?.selected == true
+            }
+            pickerIndex = if (currentPos >= 0) currentPos else 0
+            pickerOpen = true
+        },
         aiSubtitleState = aiSubtitleState
-    )
+    ) else emptyList()
 
     val currentSelectable = menuGroups.getOrNull(menuGroup)?.entries?.selectableIndices() ?: emptyList()
+    LaunchedEffect(menuOpen, menuGroup, currentSelectable) {
+        if (menuOpen && menuEntry !in currentSelectable) menuEntry = currentSelectable.firstOrNull() ?: 0
+    }
+
+    /** 退出播放的确认框是否打开。返回键在没有叠加层时不再直接退出，而是先问一句。 */
+    var exitConfirmOpen by remember { mutableStateOf(false) }
+
+    /** 确认框里当前高亮的是不是「确认退出」。默认 false = 高亮「取消」。 */
+    var exitConfirmConfirm by remember { mutableStateOf(false) }
 
     BackHandler {
         when {
+            // 确认框在最上层：返回键 = 取消（继续看）
+            exitConfirmOpen -> exitConfirmOpen = false
+            // 逐层退出：配置层 → 选择页 → 激活态 → 二级 → 菜单 → 提示条 → 控制条 → 退出确认框
+            aiConfigOpen -> aiConfigOpen = false
+            pickerOpen -> pickerOpen = false
+            adjustActive -> adjustActive = false
+            menuFocusDeep -> menuFocusDeep = false
             menuOpen -> menuOpen = false
-            else -> onBack()
+            // 提示条：自动出现的那种（自动选轨 / 字幕轨读取失败…），按返回直接收掉，
+            // 不用干等它自己消失。
+            noticeText != null -> viewModel.dismissNotice()
+            // 控制条（连带顶栏）还显示着：按返回先把这一屏控件收掉，**不该直接问
+            // "要不要退出"**。它本来就是 6 秒后自动隐藏的东西，返回键只是"提前收"。
+            showControls -> showControls = false
+            // 没有叠加层了 —— **不再直接退出播放**，先弹确认框（默认高亮「取消」）。
+            // 一次误按就退片、进度还不保存，代价太大。
+            else -> {
+                exitConfirmConfirm = false
+                exitConfirmOpen = true
+            }
         }
     }
 
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color.Black)
+            .background(BeiGlass.Ink)
             .focusRequester(focusRequester)
             .focusable()
             .onPreviewKeyEvent { event ->
@@ -271,10 +348,35 @@ fun PlayerScreen(
                 }
                 if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
 
+                // 返回键一律不在这里消费，交给 BackHandler 逐层退出
+                // （配置层 → 激活态 → 三级 → 二级 → 菜单 → 离开播放页）。
+                // 否则它会被下面那个「任意键唤出控制条」的兜底分支吃掉 —— 真机上表现就是
+                // 「按返回没反应」（实测：AI 配置层开着时按返回关不掉）。
+                if (event.key == Key.Back) return@onPreviewKeyEvent false
+
                 // 记下每一次按键的键名，供「影片详情」显示 —— 用来确认 ☰ 实际发的是什么
                 lastKeyName = android.view.KeyEvent
                     .keyCodeToString(event.nativeKeyEvent.keyCode)
                     .removePrefix("KEYCODE_")
+
+                // ---------- 退出确认框：它是最上层，独占按键
+                //
+                // 左右切换「确认退出 / 取消」，OK 执行当前高亮的那一个，其余一律吞掉
+                // （免得误触到播放控制）。返回键在上面已经放行给 BackHandler = 取消。
+                if (exitConfirmOpen) {
+                    return@onPreviewKeyEvent when (event.key) {
+                        Key.DirectionLeft, Key.DirectionRight -> {
+                            exitConfirmConfirm = !exitConfirmConfirm
+                            true
+                        }
+                        Key.Enter, Key.DirectionCenter -> {
+                            exitConfirmOpen = false
+                            if (exitConfirmConfirm) onBack()
+                            true
+                        }
+                        else -> true
+                    }
+                }
 
                 // ---------- 0) 信息层：任意键关闭
                 if (infoOverlay) {
@@ -288,76 +390,137 @@ fun PlayerScreen(
                     return@onPreviewKeyEvent true
                 }
 
-                // ---------- 1) 菜单打开时由菜单全权接管方向键
-                if (menuOpen) {
-                    val groupCount = menuGroups.size
+                // ---------- 0) 选择页：条目太多时弹出的整页选择，优先于菜单接管按键
+                if (pickerOpen) {
+                    val pickerSelectable = pickerEntries.selectableIndices()
+                    val pickerLast = pickerSelectable.lastIndex.coerceAtLeast(0)
                     return@onPreviewKeyEvent when (event.key) {
-                        Key.Menu, Key.Info -> {
-                            menuOpen = false
+                        // 返回 / 菜单键：取消（不选），回到菜单
+                        Key.Back, Key.Menu, Key.Info -> {
+                            pickerOpen = false
                             true
                         }
 
+                        // 网格导航：上下跨行、左右逐个；步长与组件里的 PICKER_COLUMNS 必须一致
                         Key.DirectionUp -> {
-                            if (menuFocusDeep) {
-                                val idx = currentSelectable.indexOf(menuEntry)
-                                val next = if (idx <= 0) currentSelectable.lastIndex else idx - 1
-                                menuEntry = currentSelectable.getOrElse(next) { menuEntry }
-                            } else {
-                                menuGroup = (menuGroup - 1 + groupCount) % groupCount
-                                // 定位到该组第一个**可选项**的下标。写死 0 会落在 Header 上，
-                                // 而高亮条件是 index == menuEntry，所以焦点会「看不见」。
-                                menuEntry = menuGroups.getOrNull(menuGroup)?.entries?.selectableIndices()?.firstOrNull() ?: 0
-                            }
+                            pickerIndex = (pickerIndex - PICKER_COLUMNS).coerceAtLeast(0)
                             true
                         }
 
                         Key.DirectionDown -> {
+                            pickerIndex = (pickerIndex + PICKER_COLUMNS).coerceAtMost(pickerLast)
+                            true
+                        }
+
+                        Key.DirectionLeft -> {
+                            pickerIndex = (pickerIndex - 1).coerceAtLeast(0)
+                            true
+                        }
+
+                        Key.DirectionRight -> {
+                            pickerIndex = (pickerIndex + 1).coerceAtMost(pickerLast)
+                            true
+                        }
+
+                        // OK = 选中当前项并关闭 —— 这就是「选完再关闭」
+                        Key.Enter, Key.DirectionCenter -> {
+                            val entryIndex = pickerSelectable.getOrNull(pickerIndex)
+                            val entry = entryIndex?.let { pickerEntries.getOrNull(it) }
+                            if (entry is MenuEntry.Choice) entry.onSelect()
+                            pickerOpen = false
+                            true
+                        }
+
+                        // 弹页打开时把其余按键都吞掉：免得误触播放 / 快进，也免得穿透到菜单
+                        else -> true
+                    }
+                }
+
+                // ---------- 1) 菜单打开时由菜单全权接管方向键
+                //
+                // 语义（用户定的）：
+                //   一级 ──左键──▶ 二级（条目多时再开整页选择页）
+                //   上下：当前层里移动；
+                //   左键：**非激活态**进二级 / 激活数值项；激活态则是「减小」；
+                //   右键：**激活态**是「增大」；非激活态才回一级；
+                //   返回键：逐层退出（激活态 → 二级 → 菜单）；
+                //   OK：单选项「切换」；动作项「执行」；数值项「激活 / 退出激活」。
+                //
+                // 「激活态下右=增大」是用户真机试用后明确要求的：调一个数值时左右就是减/增，
+                // 退出激活交给 OK / 返回 —— 否则右一按就把激活撤了，看着像“跳回上级菜单”。
+                if (menuOpen) {
+                    val groupCount = menuGroups.size
+                    val groupEntries = menuGroups.getOrNull(menuGroup)?.entries.orEmpty()
+                    val groupSelectable = groupEntries.selectableIndices()
+                    val currentEntry = groupEntries.getOrNull(menuEntry)
+
+                    return@onPreviewKeyEvent when (event.key) {
+                        Key.Menu, Key.Info -> {
+                            menuOpen = false
+                            adjustActive = false
+                            true
+                        }
+
+                        Key.DirectionUp, Key.DirectionDown -> {
+                            val step = if (event.key == Key.DirectionUp) -1 else 1
                             if (menuFocusDeep) {
-                                val idx = currentSelectable.indexOf(menuEntry)
-                                val next = if (idx >= currentSelectable.lastIndex) 0 else idx + 1
-                                menuEntry = currentSelectable.getOrElse(next) { menuEntry }
+                                // 激活态下按上下 = 先退出激活再移动（不响应反而像遥控器坏了）
+                                adjustActive = false
+                                val pos = groupSelectable.indexOf(menuEntry)
+                                if (pos >= 0) {
+                                    val next = if (step < 0) {
+                                        if (pos <= 0) groupSelectable.lastIndex else pos - 1
+                                    } else {
+                                        if (pos >= groupSelectable.lastIndex) 0 else pos + 1
+                                    }
+                                    menuEntry = groupSelectable.getOrElse(next) { menuEntry }
+                                }
                             } else {
-                                menuGroup = (menuGroup + 1) % groupCount
+                                menuGroup = (menuGroup + step + groupCount) % groupCount
+                                adjustActive = false
+                                // 定位到该组第一个**可选项**：写死 0 会落在 Header 上，高亮就「看不见」了。
                                 menuEntry = menuGroups.getOrNull(menuGroup)?.entries?.selectableIndices()?.firstOrNull() ?: 0
                             }
                             true
                         }
 
-                        // 二级面板弹在**左边**，所以方向键按「空间位置」来：
-                        // 「右」= 退回一级；「左」= 进入二级（对数值项是减小，增大用确认键）。
-                        Key.DirectionRight -> {
-                            if (menuFocusDeep) {
-                                // 二级面板弹在左边，按右键就是「退回一级」—— 一律如此，
-                                // 数值项也不例外（数值的增减用左键减小、确认键增大）。
-                                menuFocusDeep = false
-                            } else {
-                                menuFocusDeep = currentSelectable.isNotEmpty()
+                        // 「左」= 往里走一层（数值项是激活；激活态则是减小）
+                        Key.DirectionLeft -> {
+                            when {
+                                adjustActive -> (currentEntry as? MenuEntry.Adjust)?.onDecrease()
+
+                                menuFocusDeep -> when (currentEntry) {
+                                    is MenuEntry.Adjust -> adjustActive = true
+                                    // 其余项（单选项 / 动作项）没有更深一层，左键就回一级
+                                    else -> menuFocusDeep = false
+                                }
+
+                                else -> menuFocusDeep = groupSelectable.isNotEmpty()
                             }
                             true
                         }
 
-                        Key.DirectionLeft -> {
-                            if (menuFocusDeep) {
-                                val entry = menuGroups.getOrNull(menuGroup)?.entries?.getOrNull(menuEntry)
-                                if (entry is MenuEntry.Stepper) entry.onDecrease() else menuFocusDeep = false
-                            } else {
-                                // 焦点在一级时，左键进入二级 —— 这是用户明确要求的操作
-                                menuFocusDeep = currentSelectable.isNotEmpty()
+                        // 「右」：激活态 = 增大；否则回一级
+                        Key.DirectionRight -> {
+                            when {
+                                adjustActive -> (currentEntry as? MenuEntry.Adjust)?.onIncrease()
+                                menuFocusDeep -> menuFocusDeep = false
+                                else -> Unit
                             }
                             true
                         }
 
                         Key.Enter, Key.DirectionCenter -> {
-                            if (menuFocusDeep) {
-                                val entry = menuGroups.getOrNull(menuGroup)?.entries?.getOrNull(menuEntry)
-                                when (entry) {
-                                    is MenuEntry.Choice -> entry.onSelect()
-                                    is MenuEntry.Action -> entry.onClick()
-                                    is MenuEntry.Stepper -> entry.onIncrease()
+                            when {
+                                menuFocusDeep -> when (currentEntry) {
+                                    is MenuEntry.Choice -> currentEntry.onSelect()
+                                    is MenuEntry.Action -> currentEntry.onClick()
+                                    // 数值项：OK 是「激活 / 退出激活」，调值交给 ←/→
+                                    is MenuEntry.Adjust -> adjustActive = !adjustActive
                                     else -> Unit
                                 }
-                            } else {
-                                menuFocusDeep = currentSelectable.isNotEmpty()
+
+                                else -> menuFocusDeep = groupSelectable.isNotEmpty()
                             }
                             true
                         }
@@ -484,12 +647,19 @@ fun PlayerScreen(
             modifier = Modifier.fillMaxSize()
         )
 
-        // 主字幕已交给 libVLC 用 libass 渲染，画在 VLCVideoLayout 内部（见 VlcPlayerController），
-        // 这里只画次字幕。
+        // **两路字幕现在都由 Compose 自绘** —— 字体走系统字体栈，任何能正常显示中文界面的
+        // 电视都不会再出现方框，两路的样式与位置也完全对称。
         //
-        // 层级上次字幕在 Compose 层、位于主字幕**之上**，所以两路位置重叠时是次字幕盖住主字幕 ——
-        // 避让只能靠**位置错开**：次字幕的「底部距离」在字幕设置面板里按主字幕实际高度调大即可。
-        // 不再像以前那样按主字幕实测高度自动避位：主字幕已不由我们绘制，拿不到它的高度。
+        // 顺序：先主后次。层级上次字幕在上，两路位置重叠时由次字幕盖住主字幕，
+        // 所以避让靠**位置错开** —— 把次字幕的「底部距离」在字幕设置面板里调大即可。
+        //
+        // 例外：**图片字幕**（PGS / VOBSUB / DVBSUB）仍由 libVLC 渲染在 VLCVideoLayout 内，
+        // 此时 primaryCue 恒为 null，这一层自然不画。
+        SubtitleOverlay(
+            cue = primaryCue,
+            style = primary.style,
+            positionMs = positionMs - primary.offsetMs
+        )
         SubtitleOverlay(
             cue = secondaryCue,
             style = secondary.style,
@@ -497,14 +667,18 @@ fun PlayerScreen(
         )
 
         if (showControls && !menuOpen) {
-            PlayerControls(
+            // 顶栏：左＝文件名，右＝实时网速 · 当前时间。与控制条同步出现，
+            // 但因为「播放中才会自动隐藏」（见上面的自动隐藏条件），暂停时它们是常驻的。
+            PlayerStatusBar(
                 title = viewModel.video.title,
-                isPlaying = isPlaying,
+                speedText = networkSpeedText,
+                clockText = clockText
+            )
+            PlayerControls(
                 positionMs = positionMs,
                 durationMs = durationMs,
                 primaryLabel = primary.label,
                 secondaryLabel = secondary.label,
-                onTogglePlayPause = viewModel::togglePlayPause,
                 onSeekBackward = {
                     viewModel.seekBy(-SEEK_STEP_MS)
                     seekHint = "⏪ -10s"
@@ -557,35 +731,74 @@ fun PlayerScreen(
             )
         }
 
-        // ---- 侧边菜单：一级在右，二级向左弹出
-        if (menuOpen) {
+        // ---- 侧边菜单：一级在右、二级在左（两级）
+        //
+        // **选择页打开时不再画菜单** —— 选择页的遮罩是半透明的，两层叠在一起会互相透出来
+        // （真机反馈："几个透明页面叠加在一起"）。规范 §四 也要求覆盖层**互斥显示**：
+        // 层数少了合成更便宜，观感也不会糊成一团。
+        if (menuOpen && !pickerOpen) {
             PlayerMenuOverlay(
                 groups = menuGroups,
                 selectedGroup = menuGroup,
                 selectedEntry = menuEntry,
                 focusOnEntries = menuFocusDeep,
+                adjustActive = adjustActive,
                 title = viewModel.video.title
             )
         }
 
+        // ---- 选择页（条目太多时）：**替换**菜单显示，而不是叠在它上面。
+        // 选完 / 取消后 `pickerOpen` 归 false，菜单自然又画出来（menuGroup / menuEntry 都还在）。
+        if (pickerOpen) {
+            PlayerChoicePickerOverlay(
+                title = pickerTitle,
+                entries = pickerEntries,
+                selectedIndex = pickerIndex
+            )
+        }
+
+        // ---- AI 字幕配置层：从菜单「AI 字幕设置…」跳过来。
+        // 播放只暂停不释放，返回即回到画面 —— 用户要的是「能跳过去配一下再回来」。
+        if (aiConfigOpen) {
+            Box(modifier = Modifier.fillMaxSize().background(BeiGlass.Night)) {
+                AiSettingsScreen(
+                    settings = viewModel.settings,
+                    onBack = { aiConfigOpen = false }
+                )
+            }
+        }
+
+        // ---- 退出确认框：盖在所有东西之上（它就是"没有别的层"时才会出现的那一层）
+        if (exitConfirmOpen) {
+            PlayerExitConfirmOverlay(
+                confirmSelected = exitConfirmConfirm,
+                onConfirm = {
+                    exitConfirmOpen = false
+                    onBack()
+                },
+                onCancel = { exitConfirmOpen = false }
+            )
+        }
+
         // ---- 运行日志覆盖层：把 logcat 里 VLC/音频相关的行直接显示在电视上
+        // （这是开发者排查用的层，整屏不透明夜景底，不需要透出画面）
         if (logOverlay) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(Color(0xF0000000))
+                    .background(BeiGlass.Ink)
                     .padding(horizontal = 28.dp, vertical = 24.dp)
             ) {
                 Column(modifier = Modifier.fillMaxSize()) {
                     Text(
                         text = "运行日志（按任意键关闭）· 共 ${logLines.size} 行 · 构建 ${com.dualsub.tv.BuildConfig.BUILD_TIME}",
                         fontSize = 14.sp,
-                        color = Color(0xFFFFD54F)
+                        color = BeiGlass.AccentBright
                     )
                     Text(
                         text = "LibVLC 参数：" + VlcPlayerController.LAUNCH_OPTIONS.joinToString(" "),
                         fontSize = 11.sp,
-                        color = Color(0xFF80CBC4)
+                        color = BeiGlass.TextSecondary
                     )
                     Box(modifier = Modifier.padding(top = 6.dp))
                     Column(
@@ -598,9 +811,9 @@ fun PlayerScreen(
                                 text = line,
                                 fontSize = 11.sp,
                                 color = when {
-                                    line.contains("E/VLC") || line.contains("E/") -> Color(0xFFFF8A80)
-                                    line.contains("DualSubTV") -> Color(0xFF81D4FA)
-                                    else -> Color(0xFFB0BEC5)
+                                    line.contains("E/VLC") || line.contains("E/") -> BeiGlass.Danger
+                                    line.contains("DualSubTV") -> BeiGlass.Accent
+                                    else -> BeiGlass.TextSecondary
                                 }
                             )
                         }
@@ -615,7 +828,7 @@ fun PlayerScreen(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(Color.Black.copy(alpha = 0.88f))
+                    .background(BeiGlass.Ink.copy(alpha = 0.88f))
                     .padding(horizontal = 64.dp, vertical = 40.dp),
                 contentAlignment = Alignment.Center
             ) {
@@ -628,27 +841,27 @@ fun PlayerScreen(
                         text = "⚠ ${failure.title}",
                         fontSize = 26.sp,
                         fontWeight = FontWeight.Bold,
-                        color = Color(0xFFFF8A80),
+                        color = BeiGlass.Danger,
                         textAlign = TextAlign.Center
                     )
 
                     Text(
                         text = failure.reason,
                         fontSize = 16.sp,
-                        color = Color(0xFFECEFF1),
+                        color = BeiGlass.TextPrimary,
                         textAlign = TextAlign.Center
                     )
 
                     failure.suggestion?.let { suggestion ->
                         Box(
                             modifier = Modifier
-                                .background(Color(0x33FFD54F), RoundedCornerShape(8.dp))
+                                .background(BeiGlass.AccentFill, RoundedCornerShape(8.dp))
                                 .padding(horizontal = 18.dp, vertical = 12.dp)
                         ) {
                             Text(
                                 text = "👉 $suggestion",
                                 fontSize = 15.sp,
-                                color = Color(0xFFFFD54F),
+                                color = BeiGlass.AccentBright,
                                 textAlign = TextAlign.Center
                             )
                         }
@@ -658,7 +871,7 @@ fun PlayerScreen(
                         Text(
                             text = "已解出的轨道：$info",
                             fontSize = 13.sp,
-                            color = Color(0xFF90A4AE),
+                            color = BeiGlass.TextSecondary,
                             textAlign = TextAlign.Center
                         )
                     }
@@ -666,14 +879,14 @@ fun PlayerScreen(
                     Text(
                         text = "详情：${failure.detail}",
                         fontSize = 12.sp,
-                        color = Color(0xFF607D8B),
+                        color = BeiGlass.TextMuted,
                         textAlign = TextAlign.Center
                     )
 
                     Text(
                         text = "按「返回」退出本片；按「☰ 菜单」键可打开设置菜单",
                         fontSize = 13.sp,
-                        color = Color(0xFF78909C),
+                        color = BeiGlass.TextMuted,
                         textAlign = TextAlign.Center
                     )
                 }
@@ -689,7 +902,7 @@ fun PlayerScreen(
                         verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
                         SpinningProgressIndicator()
-                        Text(text = "正在缓冲…", fontSize = 14.sp, color = Color(0xFFB0BEC5))
+                        Text(text = "正在缓冲…", fontSize = 14.sp, color = BeiGlass.TextSecondary)
                     }
                 }
             }
@@ -703,24 +916,24 @@ fun PlayerScreen(
             ) {
                 Box(
                     modifier = Modifier
-                        .background(Color(0xCC000000), RoundedCornerShape(12.dp))
+                        .background(BeiGlass.Panel, RoundedCornerShape(12.dp))
                         .padding(horizontal = 24.dp, vertical = 14.dp)
                 ) {
-                    Text(text = seekHint ?: "", fontSize = 22.sp, color = Color.White)
+                    Text(text = seekHint ?: "", fontSize = 22.sp, color = BeiGlass.TextPrimary)
                 }
             }
 
-            // 非致命提示：顶部一行小字，不遮挡画面与控制条
+            // 非致命提示：顶部一行小字。**让位给顶栏** —— 向下错开，否则会压在文件名上。
             val infoText = noticeText
             if (infoText != null) {
                 Box(
                     modifier = Modifier
                         .align(Alignment.TopStart)
-                        .padding(start = 40.dp, top = 28.dp)
-                        .background(Color(0xCC000000), RoundedCornerShape(6.dp))
+                        .padding(start = 40.dp, top = 88.dp)
+                        .background(BeiGlass.Panel, RoundedCornerShape(6.dp))
                         .padding(horizontal = 14.dp, vertical = 8.dp)
                 ) {
-                    Text(text = "ℹ $infoText", fontSize = 14.sp, color = Color(0xFFFFD54F))
+                    Text(text = "ℹ $infoText", fontSize = 14.sp, color = BeiGlass.Warning)
                 }
             }
         }
@@ -754,8 +967,15 @@ private fun buildMenuGroups(
     subtitlePage: Int,
     onSubtitlePageChange: (Int) -> Unit,
     onShowLog: () -> Unit,
+    onOpenAiSettings: () -> Unit,
+    /** 打开「选择页」：条目太多时（内嵌字幕轨）把选择挪到整页里做。 */
+    onOpenTrackPicker: (List<MenuEntry>, String) -> Unit,
     aiSubtitleState: com.dualsub.tv.ai.AiSubtitleState = com.dualsub.tv.ai.AiSubtitleState.Idle
 ): List<PlayerMenuGroup> {
+
+    // 内嵌字幕轨不超过这个条数就直接平铺在二级菜单里（省一次按键）；
+    // 超过则改用整页选择页 —— 侧边面板塞不下三十条。
+    val inlineTrackLimit = 8
 
     val shortLabels = embeddedShortLabels(embeddedTracks)
 
@@ -769,34 +989,52 @@ private fun buildMenuGroups(
         track.error?.let { add(MenuEntry.Info("状态", "⚠ $it")) }
 
         add(MenuEntry.Header("来源"))
-        add(MenuEntry.Choice(
-            label = "不使用该路字幕",
-            selected = track.source is com.dualsub.tv.player.SubtitleSource.None,
-            onSelect = { viewModel.selectNone(isPrimary) }
-        ))
-        embeddedTracks.forEach { embedded ->
-            val shortLabel = shortLabels[embedded] ?: embedded.label
-            if (embedded.isBitmap) {
-                // 图片字幕（PGS / DVD SPU / 蓝光）**主字幕位是支持的** —— 它由 libVLC 自己
-                // 解封装并用 SPU/PGS 解码器渲染，这正是把主字幕交给它的收益之一。
-                // 次字幕走的是自绘文本层，没有位图渲染能力，所以只在那一页提示不支持。
-                if (isPrimary) {
-                    add(MenuEntry.Choice(
-                        label = shortLabel,
-                        detail = "图片字幕 · 播放器渲染",
-                        selected = (track.source as? com.dualsub.tv.player.SubtitleSource.EmbeddedTrack)?.trackIndex == embedded.index,
-                        onSelect = { viewModel.selectEmbedded(embedded, isPrimary) }
-                    ))
-                } else {
-                    add(MenuEntry.Info(shortLabel, "图片字幕，次字幕无法渲染"))
-                }
-                return@forEach
-            }
+        // 字幕轨选择器：条数少就直接平铺（省一次按键）；多了就换成整页弹页 ——
+        // 侧边面板塞不下三十条，硬塞只会让人滚半天还分不清是哪个语言。
+        val trackChoices = buildList {
             add(MenuEntry.Choice(
-                label = shortLabel,
-                detail = "内嵌",
-                selected = (track.source as? com.dualsub.tv.player.SubtitleSource.EmbeddedTrack)?.trackIndex == embedded.index,
-                onSelect = { viewModel.selectEmbedded(embedded, isPrimary) }
+                label = "不使用该路字幕",
+                selected = track.source is com.dualsub.tv.player.SubtitleSource.None,
+                onSelect = { viewModel.selectNone(isPrimary) }
+            ))
+            embeddedTracks.forEach { embedded ->
+                val shortLabel = shortLabels[embedded] ?: embedded.label
+                if (embedded.isBitmap) {
+                    // 图片字幕（PGS / DVD SPU / 蓝光）**主字幕位是支持的** —— 它由 libVLC 自己
+                    // 解封装并用 SPU/PGS 解码器渲染，这正是把主字幕交给它的收益之一。
+                    // 次字幕走的是自绘文本层，没有位图渲染能力，所以这里只标出来。
+                    if (isPrimary) {
+                        add(MenuEntry.Choice(
+                            label = shortLabel,
+                            detail = "图片字幕 · 播放器渲染",
+                            selected = (track.source as? com.dualsub.tv.player.SubtitleSource.EmbeddedTrack)?.trackIndex == embedded.index,
+                            onSelect = { viewModel.selectEmbedded(embedded, isPrimary) }
+                        ))
+                    } else {
+                        add(MenuEntry.Info(shortLabel, "图片字幕，次字幕无法渲染"))
+                    }
+                    return@forEach
+                }
+                add(MenuEntry.Choice(
+                    label = shortLabel,
+                    detail = "内嵌",
+                    selected = (track.source as? com.dualsub.tv.player.SubtitleSource.EmbeddedTrack)?.trackIndex == embedded.index,
+                    onSelect = { viewModel.selectEmbedded(embedded, isPrimary) }
+                ))
+            }
+        }
+        if (embeddedTracks.size <= inlineTrackLimit) {
+            addAll(trackChoices)
+        } else {
+            add(MenuEntry.Action(
+                label = "选择字幕轨…",
+                detail = "${embeddedTracks.size} 条 · 整页选择",
+                onClick = {
+                    onOpenTrackPicker(
+                        trackChoices,
+                        if (isPrimary) "主字幕 · 选择字幕轨" else "次字幕 · 选择字幕轨"
+                    )
+                }
             ))
         }
         add(MenuEntry.Action(label = "选择外挂字幕文件…", onClick = { onPickFile(isPrimary) }))
@@ -828,43 +1066,51 @@ private fun buildMenuGroups(
                     else viewModel.startLiveAiSubtitle()
                 }
             ))
+            // AI 的配置（API Key / 模型）不在菜单里编辑，而是跳到设置里的 AI 页 ——
+            // 扫码、输入这类交互适合全屏页面，插在侧边菜单里会很挤。
+            add(MenuEntry.Action(
+                label = "AI 字幕设置…",
+                detail = "API Key / 模型",
+                onClick = onOpenAiSettings
+            ))
         }
 
         add(MenuEntry.Header("显示样式"))
         if (isPrimary) {
-            // 主字幕由 libVLC 的 libass 渲染：字号 / 位置 / 颜色 / 描边都由**片源自带的
-            // 特效字幕**决定，改这里的数字不会有任何效果。所以主字幕页不摆这些控件，
-            // 免得给出「调了没用」的假开关 —— 只有时间偏移是动态可调的（走 setSpuDelay）。
+            // 主字幕与次字幕现在都由 Compose 自绘（走系统字体栈），所以样式是**可调**的 ——
+            // 但播放页只保留最常用的「时间偏移」，字号/颜色这些放到「设置」页里调，
+            // 免得侧边菜单一进去就是七八个数值项。
             add(MenuEntry.Info(
                 "主字幕样式",
-                "由播放器按片源特效字幕渲染，此处不可调（仅时间偏移可调）"
+                "字号 / 颜色 / 位置在「设置」页的字幕样式里调，这里只调时间偏移"
             ))
         } else {
             add(MenuEntry.Info(
                 "避让主字幕",
                 "次字幕叠在主字幕上方；两者重叠时把下面的「底部距离」调大"
             ))
-            add(MenuEntry.Stepper(
+            add(MenuEntry.Adjust(
                 label = "字号",
                 value = "${track.style.fontSizeSp}",
                 onDecrease = { viewModel.changeStyle(isPrimary) { it.copy(fontSizeSp = (it.fontSizeSp - 2).coerceAtLeast(12)) } },
                 onIncrease = { viewModel.changeStyle(isPrimary) { it.copy(fontSizeSp = (it.fontSizeSp + 2).coerceAtMost(60)) } }
             ))
-            add(MenuEntry.Stepper(
+            add(MenuEntry.Adjust(
                 label = "底部距离",
                 value = "${track.style.bottomPaddingDp}",
                 onDecrease = { viewModel.changeStyle(isPrimary) { it.copy(bottomPaddingDp = (it.bottomPaddingDp - 8).coerceAtLeast(0)) } },
                 onIncrease = { viewModel.changeStyle(isPrimary) { it.copy(bottomPaddingDp = (it.bottomPaddingDp + 8).coerceAtMost(400)) } }
             ))
         }
-        add(MenuEntry.Stepper(
+        add(MenuEntry.Adjust(
             label = "时间偏移",
             value = formatOffset(track.offsetMs),
             onDecrease = { viewModel.adjustOffset(isPrimary, -100L) },
-            onIncrease = { viewModel.adjustOffset(isPrimary, 100L) }
+            onIncrease = { viewModel.adjustOffset(isPrimary, 100L) },
+            detail = "按 OK 激活后用 ←/→ 调"
         ))
         if (!isPrimary) {
-            add(MenuEntry.Stepper(
+            add(MenuEntry.Adjust(
                 label = "描边强度",
                 value = "${track.style.outlineWidth.toInt()}",
                 onDecrease = { viewModel.changeStyle(isPrimary) { it.copy(outlineWidth = (it.outlineWidth - 1f).coerceAtLeast(0f)) } },
@@ -919,7 +1165,7 @@ private fun buildMenuGroups(
                 }
             }
             add(MenuEntry.Header("输出"))
-            add(MenuEntry.Stepper(
+            add(MenuEntry.Adjust(
                 label = "音量",
                 value = "${stats.volume}%",
                 onDecrease = { viewModel.setVolume(stats.volume - 10) },
@@ -1021,6 +1267,13 @@ private fun displayNameOf(context: Context, uri: Uri): String {
 }
 
 private const val AUTO_HIDE_DELAY_MS = 6000L
+
+/**
+ * 右上角时钟的刷新间隔。
+ *
+ * 一分钟才变一次字，但按秒刷才能保证跨分钟时不迟滞。
+ */
+private const val CLOCK_TICK_MS = 1000L
 /**
  * 按住左/右时的跳转步长。
  *
@@ -1037,6 +1290,17 @@ private fun longPressSeekMs(repeatCount: Int): Long {
 private const val SEEK_STEP_MS = 10_000L
 private const val BUFFERING_HINT_DELAY_MS = 700L
 private const val SEEK_HINT_DURATION_MS = 600L
+
+/**
+ * 把字节/秒格式化成右上角那行小字：**统一用 `MB/s`**（例如 `2.56 MB/s`）。
+ *
+ * 不按量级在 kB/s 与 MB/s 之间来回切：同一屏上单位变来变去，扫一眼还得多想一下
+ * 「这到底算快不快」。固定成 MB/s 之后，**数字本身大小就是结论**（0.27 → 2.56 → 12.40）。
+ * 保留两位小数是为了低速时也看得出变化（一位小数会把 0.27 和 0.31 都抹成 0.3）。
+ * 用 US locale 固定小数点，免得某些区域设置把 `.` 显示成 `,`。
+ */
+private fun formatSpeed(bytesPerSec: Long): String =
+    "%.2f MB/s".format(Locale.US, bytesPerSec / 1024.0 / 1024.0)
 private const val PREVIEW_RELEASE_TIMEOUT_MS = 300L
 
 /** 无依赖的旋转圆弧缓冲指示器（tv-material 1.0.0 没有 CircularProgressIndicator）。 */
@@ -1051,7 +1315,7 @@ private fun SpinningProgressIndicator() {
     )
     Canvas(modifier = Modifier.size(48.dp).graphicsLayer { rotationZ = angle }) {
         drawArc(
-            color = Color.White,
+            color = BeiGlass.Accent,
             startAngle = 0f,
             sweepAngle = 270f,
             useCenter = false,

@@ -6,6 +6,7 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -20,19 +21,28 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.Text
 import com.dualsub.tv.ai.AiSubtitleState
-import com.dualsub.tv.ui.theme.BeiPalette
+import com.dualsub.tv.ui.theme.BeiDims
+import com.dualsub.tv.ui.theme.BeiGlass
 
 /**
  * 右上角小悬浮条：AI 字幕进度提示。
- * Running → 深灰背景 + 进度条
- * Live    → 绿色胶囊（无进度条）
- * LiveFailed(canFallback) → 橙色背景 + 两行提示
+ *
+ * Running → 黑底半透明面板 + 香槟进度条
+ * Live    → 成功色胶囊（无进度条）
+ * LiveFailed → 面板 + 警告色标题
+ *
+ * ## 配色按"压在视频画面上"的规则走
+ *
+ * 这里背后是**视频画面**，不是我们自己铺的夜景，所以面板用 [BeiGlass.Panel]（黑 55%）
+ * 而不是外壳那套 [BeiGlass.Glass]（白 6%）—— 规范 § 四 的硬约束是"视频画面上叠白 ≤ 12%、
+ * 叠黑 ≤ 60%"，叠白多一点画面就发灰看不清了。
+ *
+ * 只有成功 / 警告这类**状态**才借用语义色，装饰一律无色。
  */
 @Composable
 fun AiSubtitleProgressOverlay(
@@ -58,6 +68,9 @@ fun AiSubtitleProgressOverlay(
     }
 }
 
+/** 画面上悬浮面板的统一样式（黑底半透明 + 1dp 白 15% 描边 + 16dp 圆角）。 */
+private val OverlayShape = RoundedCornerShape(BeiDims.PanelRadius)
+
 @Composable
 private fun RunningCard(state: AiSubtitleState.Running) {
     val fraction = if (state.total > 0) state.current.toFloat() / state.total else 0f
@@ -65,7 +78,9 @@ private fun RunningCard(state: AiSubtitleState.Running) {
         modifier = Modifier
             .padding(top = 32.dp, end = 32.dp)
             .widthIn(max = 320.dp)
-            .background(Color(0xE0101418), RoundedCornerShape(10.dp))
+            .clip(OverlayShape)
+            .background(BeiGlass.Panel)
+            .border(BeiDims.Border, BeiGlass.Border, OverlayShape)
             .padding(horizontal = 18.dp, vertical = 12.dp)
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -74,26 +89,26 @@ private fun RunningCard(state: AiSubtitleState.Running) {
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(text = "AI 生成字幕", fontSize = 13.sp, color = Color(0xFF90A4AE))
+                Text(text = "AI 生成字幕", fontSize = BeiDims.BodySize, color = BeiGlass.TextSecondary)
                 Text(
                     text = "${state.current}/${state.total}",
-                    fontSize = 12.sp,
-                    color = Color(0xFF90A4AE)
+                    fontSize = BeiDims.CaptionSize,
+                    color = BeiGlass.TextMuted
                 )
             }
-            Text(text = state.phase, fontSize = 12.sp, color = Color(0xFFE0E0E0))
+            Text(text = state.phase, fontSize = BeiDims.CaptionSize, color = BeiGlass.TextPrimary)
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(4.dp)
                     .clip(RoundedCornerShape(2.dp))
-                    .background(Color.White.copy(alpha = 0.15f))
+                    .background(BeiGlass.Border)
             ) {
                 Box(
                     modifier = Modifier
                         .fillMaxWidth(fraction.coerceIn(0f, 1f))
                         .height(4.dp)
-                        .background(BeiPalette.Accent)
+                        .background(BeiGlass.Accent)
                 )
             }
         }
@@ -102,16 +117,19 @@ private fun RunningCard(state: AiSubtitleState.Running) {
 
 @Composable
 private fun LiveCapsule(state: AiSubtitleState.Live) {
+    val shape = RoundedCornerShape(50)
     Box(
         modifier = Modifier
             .padding(top = 32.dp, end = 32.dp)
-            .background(Color(0xCC1B5E20), RoundedCornerShape(20.dp))
+            .clip(shape)
+            .background(BeiGlass.Glass)
+            .border(BeiDims.Border, BeiGlass.Success.copy(alpha = 0.45f), shape)
             .padding(horizontal = 16.dp, vertical = 8.dp)
     ) {
         Text(
             text = "▶ 实时 AI · 已缓冲 ${state.bufferedMs / 1000}s",
-            fontSize = 13.sp,
-            color = Color(0xFF80FF80)
+            fontSize = BeiDims.BodySize,
+            color = BeiGlass.Success
         )
     }
 }
@@ -122,25 +140,27 @@ private fun LiveFailedCard(state: AiSubtitleState.LiveFailed) {
         modifier = Modifier
             .padding(top = 32.dp, end = 32.dp)
             .widthIn(max = 340.dp)
-            .background(Color(0xE0301800), RoundedCornerShape(10.dp))
+            .clip(OverlayShape)
+            .background(BeiGlass.Panel)
+            .border(BeiDims.Border, BeiGlass.Border, OverlayShape)
             .padding(horizontal = 18.dp, vertical = 12.dp)
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text(
                 text = "⚠ 实时模式失败",
-                fontSize = 13.sp,
-                color = Color(0xFFFFB74D)
+                fontSize = BeiDims.BodySize,
+                color = BeiGlass.Warning
             )
             Text(
                 text = state.reason.take(60),
-                fontSize = 12.sp,
-                color = Color(0xFFE0E0E0)
+                fontSize = BeiDims.CaptionSize,
+                color = BeiGlass.TextPrimary
             )
             if (state.canFallback) {
                 Text(
                     text = "建议改用「AI 自动生成字幕」批处理模式",
-                    fontSize = 11.sp,
-                    color = Color(0xFF90A4AE)
+                    fontSize = BeiDims.TinySize,
+                    color = BeiGlass.TextSecondary
                 )
             }
         }

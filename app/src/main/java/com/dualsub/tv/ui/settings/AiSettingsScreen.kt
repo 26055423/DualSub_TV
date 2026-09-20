@@ -3,17 +3,19 @@
 package com.dualsub.tv.ui.settings
 
 import android.graphics.Bitmap
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -26,17 +28,21 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.tv.material3.Button
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.Text
 import com.dualsub.tv.ai.AiSubtitleConfig
 import com.dualsub.tv.ai.AiSubtitleConfigServer
 import com.dualsub.tv.data.SettingsStore
+import com.dualsub.tv.ui.shell.BeiChoiceRow
+import com.dualsub.tv.ui.shell.BeiPageHeader
+import com.dualsub.tv.ui.shell.BeiPillButton
+import com.dualsub.tv.ui.shell.BeiStaticCard
+import com.dualsub.tv.ui.theme.BeiDims
+import com.dualsub.tv.ui.theme.BeiGlass
 import com.dualsub.tv.ui.util.generateQrBitmap
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -44,16 +50,27 @@ import java.net.Inet4Address
 import java.net.NetworkInterface
 
 /**
- * AI 字幕配置页。
+ * AI 字幕配置页 —— 「设置」里的**二级页**（早先它占过一个一级导航项，现按用户要求收回设置里）。
  *
- * 显示本机局域网 IP + 18080 端口的二维码，手机扫码后打开浏览器填写 API Key 等参数。
- * 提交后 TV 端通过 configReceived StateFlow 感知更新并刷新当前配置显示。
+ * 交互有意做成"电视只管用、配置交给手机"：TV 上用遥控器敲 Base URL / API Key 是折磨，
+ * 所以电视起一个局域网 HTTP 服务并显示二维码，手机扫码在浏览器里填。配置提交后电视端
+ * 通过 [AiSubtitleConfigServer.configReceived] 立刻感知并刷新本页显示。
+ *
+ * **AI 的「用」不在这里**：生成 / 实时翻译在播放页菜单的字幕二级里，本页只负责「配」。
+ *
+ * 视觉：深墨夜景底（由外壳提供）+ 无色玻璃卡；二维码那张**白底**刻意保留 ——
+ * 扫码识别依赖白底黑块，那里不能套玻璃。
+ *
+ * @param onBack 返回上一页（设置主页，或播放中从菜单跳过来时的播放画面）。
  */
 @Composable
 fun AiSettingsScreen(
     settings: SettingsStore,
-    onExit: () -> Unit
+    onBack: () -> Unit = {}
 ) {
+    // 返回键退回上一页，而不是直接退出应用 —— 这一页可能从设置进来，也可能从播放菜单跳过来。
+    BackHandler(onBack = onBack)
+
     val server = remember { AiSubtitleConfigServer(settings) }
     val configReceived by server.configReceived.collectAsState()
     val currentConfig by settings.aiConfig.collectAsState(initial = AiSubtitleConfig(
@@ -88,146 +105,132 @@ fun AiSettingsScreen(
         }
     }
 
-    Row(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Color(0xFF0B0E16))
-            .padding(horizontal = 48.dp, vertical = 36.dp),
-        horizontalArrangement = Arrangement.spacedBy(48.dp),
-        verticalAlignment = Alignment.Top
-    ) {
-        // 左：二维码 + 说明
-        Column(
-            verticalArrangement = Arrangement.spacedBy(16.dp),
-            modifier = Modifier.width(280.dp)
+    Column(modifier = Modifier.fillMaxSize()) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(text = "AI 字幕设置", fontSize = 22.sp, fontWeight = FontWeight.Bold)
-
-            if (qrBitmap != null) {
-                Box(
-                    modifier = Modifier
-                        .background(Color.White, RoundedCornerShape(12.dp))
-                        .padding(10.dp)
-                ) {
-                    Image(
-                        bitmap = qrBitmap.asImageBitmap(),
-                        contentDescription = "配置二维码",
-                        modifier = Modifier.size(200.dp)
-                    )
-                }
-                Text(
-                    text = "用手机扫码，在浏览器填写 API Key 并提交",
-                    fontSize = 13.sp,
-                    color = Color(0xFF90A4AE)
-                )
-                Text(
-                    text = serverUrl ?: "",
-                    fontSize = 12.sp,
-                    color = Color(0xFF546E7A)
-                )
-            } else {
-                Text(
-                    text = if (lanIp == null) "未连接局域网，无法显示二维码。\n请确认电视已接入 Wi-Fi 或以太网。"
-                    else "生成二维码失败",
-                    fontSize = 13.sp,
-                    color = Color(0xFFFFD54F)
-                )
-            }
-
-            Button(onClick = onExit) { Text("返回") }
+            BeiPageHeader(
+                title = "AI 字幕",
+                subtitle = "用 OpenAI 兼容接口（默认阿里云百炼 Qwen-Omni）把外语片译成字幕；配置只存在电视本地"
+            )
+            Spacer(modifier = Modifier.weight(1f))
+            BeiPillButton(label = "返回", onClick = onBack)
         }
 
-        // 右：当前配置预览
-        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text(
-                text = if (justSaved) "✅ 配置已更新" else "当前配置",
-                fontSize = 16.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = if (justSaved) Color(0xFF81C784) else Color.White
-            )
+        Row(
+            modifier = Modifier.padding(top = 18.dp),
+            horizontalArrangement = Arrangement.spacedBy(20.dp),
+            verticalAlignment = Alignment.Top
+        ) {
+            // ---- 左：手机扫码配置
+            BeiStaticCard(modifier = Modifier.width(320.dp)) {
+                Text(
+                    text = "手机扫码配置",
+                    color = BeiGlass.TextPrimary,
+                    fontSize = BeiDims.CardTitleSize,
+                    fontWeight = FontWeight.SemiBold
+                )
 
-            ConfigRow("Base URL", currentConfig.baseUrl.ifBlank { "（未设置）" })
-            ConfigRow("API Key", if (currentConfig.apiKey.isBlank()) "（未设置）" else "••••••••${currentConfig.apiKey.takeLast(4)}")
-            ConfigRow("模型", currentConfig.model.ifBlank { "（未设置）" })
-            ConfigRow("目标语言", currentConfig.targetLang.ifBlank { "中文" })
-            if (currentConfig.prompt.isNotBlank()) {
-                ConfigRow("提示词", currentConfig.prompt)
+                if (qrBitmap != null) {
+                    Box(
+                        modifier = Modifier
+                            .padding(top = 6.dp)
+                            .background(BeiGlass.QrSurface, RoundedCornerShape(14.dp))
+                            .padding(10.dp)
+                    ) {
+                        Image(
+                            bitmap = qrBitmap.asImageBitmap(),
+                            contentDescription = "配置二维码",
+                            modifier = Modifier.size(200.dp)
+                        )
+                    }
+                    Text(
+                        text = "手机与电视连同一个 Wi-Fi，扫码后在浏览器里填 API Key 并提交。",
+                        color = BeiGlass.TextSecondary,
+                        fontSize = BeiDims.CaptionSize
+                    )
+                    Text(
+                        text = serverUrl.orEmpty(),
+                        color = BeiGlass.TextMuted,
+                        fontSize = BeiDims.CaptionSize
+                    )
+                } else {
+                    Text(
+                        text = if (lanIp == null) {
+                            "未连接局域网，无法显示二维码。请确认电视已接入 Wi-Fi 或网线。"
+                        } else {
+                            "二维码生成失败"
+                        },
+                        color = BeiGlass.Link,
+                        fontSize = BeiDims.BodySize
+                    )
+                }
             }
 
-            Text(
-                text = "提示：API Key 通过百炼控制台获取，按量计费约 0.8 元/百万 tokens。",
-                fontSize = 12.sp,
-                color = Color(0xFF546E7A)
-            )
+            // ---- 右：当前配置 + 实时字幕参数
+            BeiStaticCard(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = if (justSaved) "配置已更新" else "当前配置",
+                    color = if (justSaved) BeiGlass.Success else BeiGlass.TextPrimary,
+                    fontSize = BeiDims.CardTitleSize,
+                    fontWeight = FontWeight.SemiBold
+                )
 
-            // ---- 实时字幕参数
-            Text(
-                text = "实时字幕参数",
-                fontSize = 15.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = Color(0xFF90A4AE),
-                modifier = androidx.compose.ui.Modifier.padding(top = 8.dp)
-            )
-            val liveWindowOptions = listOf(10, 20, 40, 60)
-            val liveLeadOptions   = listOf(20, 40, 60)
-            StepperRow(
-                label = "窗口大小",
-                value = "${currentConfig.liveWindowSec}s",
-                detail = "每次提取并翻译的音频长度",
-                onDecrease = {
-                    val idx = liveWindowOptions.indexOf(currentConfig.liveWindowSec)
-                    if (idx > 0) scope.launch {
-                        settings.saveAiConfig(currentConfig.copy(liveWindowSec = liveWindowOptions[idx - 1]))
-                    }
-                },
-                onIncrease = {
-                    val idx = liveWindowOptions.indexOf(currentConfig.liveWindowSec)
-                    if (idx < liveWindowOptions.lastIndex) scope.launch {
-                        settings.saveAiConfig(currentConfig.copy(liveWindowSec = liveWindowOptions[idx + 1]))
-                    }
+                ConfigRow("Base URL", currentConfig.baseUrl.ifBlank { "（未设置）" })
+                ConfigRow(
+                    "API Key",
+                    if (currentConfig.apiKey.isBlank()) "（未设置）"
+                    else "••••••••${currentConfig.apiKey.takeLast(4)}"
+                )
+                ConfigRow("模型", currentConfig.model.ifBlank { "（未设置）" })
+                ConfigRow("目标语言", currentConfig.targetLang.ifBlank { "中文" })
+                if (currentConfig.prompt.isNotBlank()) {
+                    ConfigRow("提示词", currentConfig.prompt)
                 }
-            )
-            StepperRow(
-                label = "超前缓冲",
-                value = "${currentConfig.liveLeadSec}s",
-                detail = "提前播放位置多少秒开始翻译",
-                onDecrease = {
-                    val idx = liveLeadOptions.indexOf(currentConfig.liveLeadSec)
-                    if (idx > 0) scope.launch {
-                        settings.saveAiConfig(currentConfig.copy(liveLeadSec = liveLeadOptions[idx - 1]))
-                    }
-                },
-                onIncrease = {
-                    val idx = liveLeadOptions.indexOf(currentConfig.liveLeadSec)
-                    if (idx < liveLeadOptions.lastIndex) scope.launch {
-                        settings.saveAiConfig(currentConfig.copy(liveLeadSec = liveLeadOptions[idx + 1]))
-                    }
-                }
-            )
 
-            // ---- 视频缓冲大小
-            val videoCachingMs by settings.videoCachingMs.collectAsState(initial = 1500)
-            val cachingOptions = listOf(500, 1000, 1500, 3000, 6000)
-            Text(
-                text = "视频播放缓冲",
-                fontSize = 15.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = Color(0xFF90A4AE),
-                modifier = androidx.compose.ui.Modifier.padding(top = 8.dp)
-            )
-            StepperRow(
-                label = "缓冲大小",
-                value = "${videoCachingMs}ms",
-                detail = "调大可减少卡顿，调小降低延迟；重新打开视频后生效",
-                onDecrease = {
-                    val idx = cachingOptions.indexOf(videoCachingMs)
-                    if (idx > 0) scope.launch { settings.setVideoCachingMs(cachingOptions[idx - 1]) }
-                },
-                onIncrease = {
-                    val idx = cachingOptions.indexOf(videoCachingMs)
-                    if (idx < cachingOptions.lastIndex) scope.launch { settings.setVideoCachingMs(cachingOptions[idx + 1]) }
-                }
-            )
+                Text(
+                    text = "API Key 在百炼控制台获取，按量计费（约 0.8 元/百万 tokens）。",
+                    color = BeiGlass.TextMuted,
+                    fontSize = BeiDims.CaptionSize
+                )
+
+                Text(
+                    text = "实时字幕参数",
+                    color = BeiGlass.TextSecondary,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.padding(top = 12.dp)
+                )
+
+                BeiChoiceRow(
+                    label = "窗口大小",
+                    options = LIVE_WINDOW_OPTIONS.map { "${it}s" },
+                    selectedIndex = exactIndex(LIVE_WINDOW_OPTIONS, currentConfig.liveWindowSec),
+                    onSelect = { index ->
+                        scope.launch {
+                            settings.saveAiConfig(
+                                currentConfig.copy(liveWindowSec = LIVE_WINDOW_OPTIONS[index])
+                            )
+                        }
+                    },
+                    detail = "每次提取并翻译的音频长度"
+                )
+
+                BeiChoiceRow(
+                    label = "超前缓冲",
+                    options = LIVE_LEAD_OPTIONS.map { "${it}s" },
+                    selectedIndex = exactIndex(LIVE_LEAD_OPTIONS, currentConfig.liveLeadSec),
+                    onSelect = { index ->
+                        scope.launch {
+                            settings.saveAiConfig(
+                                currentConfig.copy(liveLeadSec = LIVE_LEAD_OPTIONS[index])
+                            )
+                        }
+                    },
+                    detail = "提前播放位置多少秒开始翻译"
+                )
+            }
         }
     }
 }
@@ -237,11 +240,11 @@ private fun ConfigRow(label: String, value: String) {
     Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         Text(
             text = label,
+            color = BeiGlass.TextSecondary,
             fontSize = 14.sp,
-            color = Color(0xFF90A4AE),
-            modifier = Modifier.width(80.dp)
+            modifier = Modifier.width(84.dp)
         )
-        Text(text = value, fontSize = 14.sp, color = Color(0xFFE0E0E0))
+        Text(text = value, color = BeiGlass.TextPrimary, fontSize = 14.sp)
     }
 }
 
@@ -252,24 +255,9 @@ private fun getLanIpAddress(): String? = runCatching {
         ?.hostAddress
 }.getOrNull()
 
-@Composable
-private fun StepperRow(
-    label: String,
-    value: String,
-    detail: String,
-    onDecrease: () -> Unit,
-    onIncrease: () -> Unit
-) {
-    Row(
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
-    ) {
-        Text(text = label, fontSize = 14.sp, color = Color(0xFF90A4AE),
-            modifier = androidx.compose.ui.Modifier.width(72.dp))
-        Button(onClick = onDecrease) { Text("－") }
-        Text(text = value, fontSize = 14.sp, color = Color(0xFFE0E0E0),
-            modifier = androidx.compose.ui.Modifier.widthIn(min = 56.dp))
-        Button(onClick = onIncrease) { Text("＋") }
-        Text(text = detail, fontSize = 11.sp, color = Color(0xFF546E7A))
-    }
-}
+/** 实时字幕的窗口长度 / 超前缓冲档位（秒）。 */
+private val LIVE_WINDOW_OPTIONS = listOf(10, 20, 40, 60)
+private val LIVE_LEAD_OPTIONS = listOf(20, 40, 60)
+
+/** 精确匹配档位；没命中返回 -1（界面一个都不选中，而不是偷偷就近取整）。 */
+private fun exactIndex(options: List<Int>, value: Int): Int = options.indexOf(value)

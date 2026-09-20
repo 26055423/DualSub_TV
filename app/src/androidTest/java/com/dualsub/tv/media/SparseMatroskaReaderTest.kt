@@ -36,6 +36,8 @@ class SparseMatroskaReaderTest {
     @Test fun subtitleRelativeIndexMatchesFallbackAndPreservesAss() = runBlocking(Dispatchers.IO) {
         val expected = SparseMatroskaReader.readWindow(largeFixture(), setOf(1, 2), 2_700_000, 2_760_000)
         val indexed = SparseMatroskaReader.readWindow(largeFixture(withSubtitleIndex = true), setOf(1, 2), 2_700_000, 2_760_000)
+        assertFalse(expected.usesSubtitleIndex)
+        assertTrue("Must exercise direct subtitle index, not silently fall back", indexed.usesSubtitleIndex)
         assertEquals(expected.cues, indexed.cues)
         assertTrue(indexed.bytesRead < 100_000)
         val empty = SparseMatroskaReader.readWindow(largeFixture(withSubtitleIndex = true), setOf(1, 2), 10_000, 20_000)

@@ -28,6 +28,16 @@ import java.util.concurrent.TimeUnit
  *
  * `RemoteLocation.share` 为空时只建立会话、不打开共享 —— 这条路径专门用于
  * 「先登录，再找出这台服务器上有哪些共享」的配置流程。
+ *
+ * ## 两层自愈（**真机上两种失败都出现过，层次不同，别合并成一层**）
+ *
+ * | 症状 | 断在哪 | 怎么救 |
+ * |---|---|---|
+ * | `DiskShare has already been closed` | **共享句柄**失效（池被 invalidate、或发生过重连），连接还活着 | [reopenShare]：只重建共享句柄 |
+ * | `Cannot write Signed(SMB2_TREE_CONNECT …) as transport is disconnected` | **传输层**断了（NAS 主动断开 / 空闲超时 / 网络抖动） | [reconnect]：整条连接作废重连 |
+ *
+ * 第二层是必须的：传输断了之后，`reopenShare()` 里的 `session.connectShare()` 必然也失败，
+ * 只做句柄级重试救不回来。两者由 [withShareRecovery] 串成"先轻后重"。
  */
 class SmbSession(private val location: RemoteLocation) : Closeable {
 
@@ -102,13 +112,10 @@ class SmbSession(private val location: RemoteLocation) : Closeable {
     /** 列出共享根目录或某个子目录。 */
     suspend fun list(path: String): List<RemoteEntry> = withContext(Dispatchers.IO) {
         ensureConnected()
-        val diskShare = share ?: throw SmbException("尚未连接到「${location.host}」")
         val normalized = SmbPaths.normalizePath(path)
 
-        val raw = try {
+        val raw = withShareRecovery("读取目录失败") { diskShare ->
             diskShare.list(normalized)
-        } catch (error: Throwable) {
-            throw SmbException("读取目录失败：${describe(error)}", error)
         }
 
         raw.mapNotNull { it.toRemoteEntry(location, normalized) }
@@ -118,19 +125,75 @@ class SmbSession(private val location: RemoteLocation) : Closeable {
     /** 打开一个文件用于随机读取。调用方负责关闭。 */
     suspend fun openFile(path: String): File = withContext(Dispatchers.IO) {
         ensureConnected()
-        val diskShare = share ?: throw SmbException("尚未连接到「${location.host}」")
-        try {
-            diskShare.openFile(
-                SmbPaths.normalizePath(path),
-                EnumSet.of(AccessMask.GENERIC_READ),
-                null,
-                SMB2ShareAccess.ALL,
-                SMB2CreateDisposition.FILE_OPEN,
-                null
-            )
-        } catch (error: Throwable) {
-            throw SmbException("打开文件失败：${describe(error)}", error)
+        val normalized = SmbPaths.normalizePath(path)
+        withShareRecovery("打开文件失败") { diskShare ->
+            openOn(diskShare, normalized)
         }
+    }
+
+    /**
+     * 在共享上执行一次操作，失败时**先轻后重**地自愈两次。
+     *
+     * 1. 常态：直接用当前共享句柄；
+     * 2. 失败 → 第 1 层：只重建共享句柄（见类注释里的 `DiskShare has already been closed`）；
+     * 3. 再失败 → 第 2 层：作废整条连接重连（见类注释里的 `transport is disconnected`），再试最后一次。
+     *
+     * 三层都失败才抛错。抛出时的文案取自**第 1 次**的 cause —— 后面两次失败往往是重连本身
+     * 的次生错误，拿它当主因会误导排查。
+     */
+    private suspend fun <T> withShareRecovery(label: String, operation: (DiskShare) -> T): T {
+        val first = runCatching { operation(shareHandle()) }
+        first.getOrNull()?.let { return it }
+
+        // 第 1 层：连接还活着，句柄被换掉了而已
+        val second = runCatching { operation(reopenShare()) }
+        second.getOrNull()?.let { return it }
+
+        // 第 2 层：传输层断了 —— session.connectShare() 也救不回来，只能整条重连
+        runCatching { reconnect() }
+
+        val cause = first.exceptionOrNull() ?: second.exceptionOrNull()
+        return runCatching { operation(shareHandle()) }
+            .getOrElse { throw SmbException("$label：${describe(cause)}", cause) }
+    }
+
+    private fun openOn(diskShare: DiskShare, normalizedPath: String): File =
+        diskShare.openFile(
+            normalizedPath,
+            EnumSet.of(AccessMask.GENERIC_READ),
+            null,
+            SMB2ShareAccess.ALL,
+            SMB2CreateDisposition.FILE_OPEN,
+            null
+        )
+
+    /** 当前共享句柄；还没打开就开一个。 */
+    private fun shareHandle(): DiskShare =
+        share ?: openShareInternal(location.share.orEmpty())
+
+    /** 丢弃可能已失效的共享句柄，重新打开一次（**前提是连接还活着**）。 */
+    private fun reopenShare(): DiskShare {
+        runCatching { share?.close() }
+        share = null
+        return openShareInternal(location.share.orEmpty())
+    }
+
+    /** 作废整条连接（传输 + 认证 + 共享句柄）后重连。处理 transport 断开。 */
+    private suspend fun reconnect() {
+        resetConnection()
+        ensureConnected()
+    }
+
+    /** 清空并关闭所有句柄；[close] 也复用它。 */
+    private fun resetConnection() {
+        runCatching { share?.close() }
+        runCatching { session?.close() }
+        runCatching { connection?.close() }
+        runCatching { client?.close() }
+        share = null
+        session = null
+        connection = null
+        client = null
     }
 
     private fun openShareInternal(shareName: String): DiskShare {
@@ -141,16 +204,7 @@ class SmbSession(private val location: RemoteLocation) : Closeable {
         return opened
     }
 
-    override fun close() {
-        runCatching { share?.close() }
-        runCatching { session?.close() }
-        runCatching { connection?.close() }
-        runCatching { client?.close() }
-        share = null
-        session = null
-        connection = null
-        client = null
-    }
+    override fun close() = resetConnection()
 
     private fun FileIdBothDirectoryInformation.toRemoteEntry(
         location: RemoteLocation,
@@ -174,8 +228,18 @@ class SmbSession(private val location: RemoteLocation) : Closeable {
         )
     }
 
-    private fun describe(error: Throwable): String =
-        error.message?.takeIf { it.isNotBlank() } ?: error.javaClass.simpleName
+    /**
+     * 只取"人能读的部分"进异常文案。
+     *
+     * 注意这里只用 `message`，**不拼 `toString()`** —— 后者会把
+     * `com.hieronymus.protocol.transport.TransportException:` 这种类全名带进界面。
+     * （调用方仍可能把 message 原样透出，所以界面层另做收敛，见 `PlayerViewModel`。）
+     */
+    private fun describe(error: Throwable?): String = when {
+        error == null -> "未知错误"
+        !error.message.isNullOrBlank() -> error.message!!
+        else -> error.javaClass.simpleName
+    }
 
     private companion object {
         const val CONNECT_TIMEOUT_SECONDS = 15L

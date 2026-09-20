@@ -31,7 +31,8 @@ class SmbSubtitleReadTest {
         try {
             val tracks = withTimeout(30_000) { EmbeddedSubtitleReader.listTracks(context, source) }
             Log.i("DualSubTV", "SMB TEST tracks: " + tracks.joinToString { "${it.index}:${it.language}:${it.title}:${it.mimeType}" })
-            val selected = tracks.filterNot { it.isBitmap }.take(2).map { it.index }.toSet()
+            val selected = args.getString("tracks")?.split(",")?.map { it.toInt() }?.toSet()
+                ?: tracks.filterNot { it.isBitmap }.take(2).map { it.index }.toSet()
             assertEquals(2, selected.size)
             for (start in (args.getString("starts") ?: "0,570000,3570000").split(",").map { it.toLong() }) {
                 sources.clear()
@@ -49,6 +50,7 @@ class SmbSubtitleReadTest {
                         }
                     }
                     Log.i("DualSubTV", "SMB TEST done: start=$start ms=${(System.nanoTime()-begin)/1_000_000} input=${window.bytesRead} counts=${window.cues.mapValues { it.value.size }}")
+                    if (args.getString("expectSubtitleIndex") == "true") assertTrue(window.usesSubtitleIndex)
                     if (start > 0) assertTrue(window.cues.values.all { it.isNotEmpty() })
                 } finally {
                     Log.i("DualSubTV", "SMB TEST IO: start=$start calls=${sources.sumOf { it.networkReadCount }} bytes=${sources.sumOf { it.networkBytesRead }}")

@@ -26,7 +26,8 @@ internal data class SubtitleWindow(
     val startMs: Long,
     val endMs: Long,
     val cues: Map<Int, List<SubtitleCue>>,
-    val bytesRead: Long = 0
+    val bytesRead: Long = 0,
+    val usesSubtitleIndex: Boolean = false
 )
 
 /** One bounded, indexed pass for both subtitle slots. No video/audio payload is downloaded. */
@@ -55,6 +56,7 @@ internal class SparseMatroskaReader private constructor(
     private var cueRelative = -1L
     private var cueDuration: Long? = null
     private var indexedBlock = false
+    private var usesSubtitleIndex = false
     private class Boundary : RuntimeException()
 
     private val extractor = object : MatroskaExtractor(EmbeddedSubtitleReader.subtitleParserFactory()) {
@@ -63,14 +65,16 @@ internal class SparseMatroskaReader private constructor(
         private val header = ByteArray(8)
 
         override fun getElementType(id: Int): Int = when (id) {
-            0xF0, 0xB2 -> 2 // CueRelativePosition / CueDuration: unsigned integer.
+            0xF7, 0xF0, 0xB2 -> 2 // CueTrack / CueRelativePosition / CueDuration.
             else -> super.getElementType(id)
         }
 
         override fun integerElement(id: Int, value: Long) {
             when (id) {
                 0xB3 -> cueTime = value
-                0xF7 -> cueTrack = value.toInt()
+                // Media3 1.6 does not handle CueTrack / RelativePosition / Duration.
+                // Keep these local; CueTime (B3) and ClusterPosition (F1) still reach super.
+                0xF7 -> { cueTrack = value.toInt(); return }
                 0xF1 -> cueCluster = value
                 0xF0 -> { cueRelative = value; return }
                 0xB2 -> { cueDuration = value; return }
@@ -176,6 +180,7 @@ internal class SparseMatroskaReader private constructor(
         val available = trackInfos().map { it.index }.toSet()
         require(selected.all { it in available }) { "所选内嵌字幕轨已不存在，请重新选轨" }
         if (canReadIndexed()) {
+            usesSubtitleIndex = true
             readIndexed()
             return snapshot()
         }
@@ -262,7 +267,7 @@ internal class SparseMatroskaReader private constructor(
     private fun snapshot() = SubtitleWindow(startMs, endMs,
             tracks.values.filter { it.index in selected }.associate { sink ->
                 sink.index to sink.cues.filter { it.endMs >= startMs && it.startMs <= endMs }.sortedAndDistinct()
-            }, input.bytesRead)
+            }, input.bytesRead, usesSubtitleIndex)
 
     private inner class Sink(val index: Int) : TrackOutput {
         var format: Format? = null

@@ -3,6 +3,7 @@
 package com.dualsub.tv.ui.player.components
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -13,13 +14,15 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.Text
 import com.dualsub.tv.ui.format.formatTime
+import com.dualsub.tv.ui.theme.BeiDims
+import com.dualsub.tv.ui.theme.BeiGlass
 
 /**
  * 「按上/下显示的播放信息层」。
@@ -29,6 +32,9 @@ import com.dualsub.tv.ui.format.formatTime
  * - 半透明深色背板，扫一眼就能读，不打断观看；
  * - 只读快照数据（`PlaybackStats` / StateFlow），**组合期不碰 JNI** —— 这一点很要紧，
  *   之前就是因为每次重组都去调 libVLC 取值，把 UI 线程卡死过。
+ *
+ * 背板用 [BeiGlass.Panel]（黑 55%）：这里背后是视频画面，不是外壳那套夜景底，
+ * 按规范只能用黑底半透明（≤ 60%）。
  */
 @Composable
 fun PlayerInfoOverlay(
@@ -45,18 +51,21 @@ fun PlayerInfoOverlay(
     rate: Float,
     modifier: Modifier = Modifier
 ) {
+    val shape = RoundedCornerShape(BeiDims.PanelRadius)
     Column(
         modifier = modifier
-            .padding(start = 40.dp, top = 36.dp)
+            .padding(start = BeiDims.ScreenStart, top = 36.dp)
             .fillMaxWidth(0.55f)
-            .background(Color(0xE0101418), RoundedCornerShape(12.dp))
+            .clip(shape)
+            .background(BeiGlass.Panel)
+            .border(BeiDims.Border, BeiGlass.Border, shape)
             .padding(horizontal = 22.dp, vertical = 18.dp),
         verticalArrangement = Arrangement.spacedBy(9.dp)
     ) {
         Text(
             text = title,
-            fontSize = 16.sp,
-            color = Color.White,
+            fontSize = BeiDims.CardTitleSize,
+            color = BeiGlass.TextPrimary,
             fontWeight = FontWeight.Bold,
             maxLines = 2
         )
@@ -81,14 +90,14 @@ private fun InfoRow(label: String, value: String) {
     ) {
         Text(
             text = label,
-            fontSize = 13.sp,
-            color = Color(0xFF90A4AE),
+            fontSize = BeiDims.BodySize,
+            color = BeiGlass.TextSecondary,
             modifier = Modifier.width(88.dp)
         )
         Text(
             text = value,
-            fontSize = 13.sp,
-            color = Color(0xFFE0E0E0),
+            fontSize = BeiDims.BodySize,
+            color = BeiGlass.TextPrimary,
             modifier = Modifier.weight(1f)
         )
     }

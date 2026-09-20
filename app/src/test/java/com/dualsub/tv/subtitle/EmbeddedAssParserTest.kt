@@ -49,6 +49,14 @@ class EmbeddedAssParserTest {
         assertEquals(listOf(500, 750), effect.karaokeSegments.map { it.durationMs })
     }
 
+    @Test fun `prefixed and unprefixed samples decode identically`() {
+        val parser = EmbeddedAssParser(listOf(format.toByteArray(), header.toByteArray()))
+        val sample = "0:00:00:00,0:00:02:50,7,0,Default,,0,0,0,,Hello"
+        val plain = parser.parse(sample.toByteArray(), 1_000_000)
+        assertEquals(1, plain.size)
+        assertEquals(plain, parser.parse(("Dialogue: " + sample).toByteArray(), 1_000_000))
+    }
+
     @Test(expected = IllegalArgumentException::class)
     fun `missing initialization fails explicitly`() {
         EmbeddedAssParser(emptyList())
