@@ -47,8 +47,14 @@
 | **外壳**：**顶部横向标签（3 项）** + 夜景观底 + 光斑（原左侧导航栏） | `ui/shell/AppShell.kt`、`ui/shell/BeiUi.kt` |
 | **内容改横向行**：媒体库按文件夹分行、网络页各分组一行 | `ui/library/LibraryScreen.kt`、`ui/network/NetworkRows.kt` |
 | **主字幕改 Compose 自绘**（原交 libVLC） | `PlayerViewModel` + `SubtitleOverlay`；图片字幕仍交 libVLC |
-| **网络页分组**：7 张来源卡 → **5 个一级入口**（本地网络 / 云盘 / NAS / WebDAV / DLNA） | `ui/network/NetworkScreen.kt`、`CloudDriveScreen.kt`、`NasVendorScreen.kt` |
+| **网络页分组**：7 张来源卡 → **4 个一级入口**（本地网络 / 云盘 / NAS / WebDAV） | `ui/network/NetworkScreen.kt`、`CloudDriveScreen.kt`、`NasVendorScreen.kt` |
+| **DLNA 并入「本地网络」**：与 SMB 扫描 `async` 并行，结果都落在该子页 | `ui/network/LocalNetworkScreen.kt` |
 | **NAS 按品牌接入**：飞牛 / 群晖 / 威联通 / 绿联，各家预填端口 + 自动探测 | `network/nas/NasVendor.kt`、`NasWebDavProbe.kt`、`ui/network/NasServerForm.kt`；`RemoteType.NAS` 复用 `WebDavBrowser` |
+| **品牌图标**：云盘三家 + NAS 四家各画轮廓（香槟金线条不用品牌色；三家网盘刻意避开"云"以免与 WebDAV 撞脸） | `ui/shell/BeiUi.kt` 的 `SourceIcon` |
+| **入口卡收小**：图标 56 → 28dp、卡宽 240 → 120dp（原宽度会挤出屏幕）；描述与标题**共用一行**、聚焦才跑马灯 | `ui/shell/BeiUi.kt` 的 `BeiIconCard`、`ui/network/NetworkRows.kt` |
+| **「已保存」收成子弹带**：主页只管进入，编辑 / 删除移到各自的子页 | `ui/network/NetworkRows.kt` 的 `SavedLocationCard` |
+| **外壳首页按返回 → 退出确认框**（默认焦点在「取消」） | `ui/AppRoot.kt` + `ui/shell/BeiUi.kt` 的 `BeiConfirmDialog` |
+| **退出播放回到原目录**：播放页从"替换外壳"改为"叠在外壳上" | `ui/AppRoot.kt` 的 `PlayerLayer` |
 | **退出播放确认框** + **返回键逐层退出** | `ui/player/components/PlayerExitConfirmOverlay.kt`、`PlayerScreen` 的 `BackHandler` |
 | **覆盖层互斥**：整页选择页打开时不画菜单 | `PlayerScreen` 渲染树 |
 | **字幕尽量单行**：合并换行后测一次，放不下就按原断行 | `SubtitleOverlay.rememberSingleLineCue` |
@@ -64,6 +70,10 @@
 | SMB 连接断开后能否自愈 | 已有模拟器访问真实 NAS 的字幕回归；NAS 踢会话后的完整自愈仍待验证 |
 | 「本地网络」自动扫描是否好用 | 同上，需要真实局域网 |
 | UI 观感（玻璃层级是否够清晰、香槟金焦点在三米外是否醒目） | 需要真机 / 装机截图 |
+| **播放页画面是否正常** | 播放页现在是**叠在外壳之上**，底下多了一层不透明的 `AppShell`；libVLC 的 `SurfaceView` 在 Z 序上有理论风险。**若画面黑 / 看不到，改法是让外壳在播放时 `alpha = 0`**（保留组合，只是不画） |
+| **播放时方向键是否只影响播放器** | 靠 `PlayerScreen` 自身整屏 `focusable()` + 抢焦点。若焦点漏到底层列表，需要给外壳加"不可聚焦"处理 |
+| **退出播放是否回到原目录** | 这是"播放页叠在外壳上"那次改动的**主目的**，需要真机走一遍「深目录 → 播放 → 退出」 |
+| **品牌图标在真机上是否认得出** | 图标画在约 14.6dp 的框里，飞牛牛头 / 群晖开口环 / 威联通 Q / 绿联 U 是否一眼分得开，只有三米外能判断 |
 
 ---
 

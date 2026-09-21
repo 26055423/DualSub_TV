@@ -562,26 +562,39 @@ data class PlaybackFailure(
 ```
 AppRoot（状态机）
 │
-├── AppShell（**顶部横向标签** + 内容区；播放页不进外壳）
+├── AppShell（**顶部横向标签** + 内容区；播放页叠在它之上，但外壳**不退出组合**）
 │   ├── ShellTab.Local    → LibraryScreen（横向行、按文件夹分组）
-│   ├── ShellTab.Network  → NetworkScreen（**5 个一级入口**）
-│   │     ├── LocalNetworkScreen（本地网络：进入即扫描 + 「＋ 手动配置」）
+│   ├── ShellTab.Network  → NetworkScreen（**4 个一级入口**）
+│   │     ├── LocalNetworkScreen（本地网络：进入即 **SMB + DLNA 并行扫描**）
 │   │     ├── CloudDriveScreen（云盘：夸克 / 百度 / 阿里）
 │   │     ├── NasVendorScreen（NAS：飞牛 / 群晖 / 威联通 / 绿联）+ NasServerForm
 │   │     ├── SmbServerForm / WebDavServerForm
 │   │     ├── Quark / Baidu / AliLoginScreen
 │   │     └── RemoteBrowseScreen（通用目录浏览）
+│   ├── BeiConfirmDialog（「退出应用？」确认框，默认焦点在「取消」）
 │   └── ShellTab.Settings → SettingsScreen
 │         └── AiSettingsScreen（二级页）
 │
-└── PlayerScreen（整屏，不走外壳）
-    ├── VLCVideoLayout（视频 + 图片字幕）
-    ├── SubtitleOverlay ×2（主 / 次字幕文本）
-    ├── PlayerStatusBar / PlayerControls
-    ├── PlayerMenuOverlay / PlayerChoicePickerOverlay
-    ├── PlayerInfoOverlay / AiSubtitleProgressOverlay
-    └── PlayerExitConfirmOverlay
+└── PlayerLayer（**叠在外壳之上**，不是替换它）
+    ├── PlayerScreen（整屏 `focusable()`，自管按键）
+    │     ├── VLCVideoLayout（视频 + 图片字幕）
+    │     ├── SubtitleOverlay ×2（主 / 次字幕文本）
+    │     ├── PlayerStatusBar / PlayerControls
+    │     ├── PlayerMenuOverlay / PlayerChoicePickerOverlay
+    │     ├── PlayerInfoOverlay / AiSubtitleProgressOverlay
+    │     └── PlayerExitConfirmOverlay
+    └── keepScreenOn + Lifecycle 前后台暂停恢复
 ```
+
+> **播放页为什么是"叠上去"而不是"换掉"**：早先 `AppRoot` 写的是
+> `if (playing != null) { PlayerScreen(); return }` —— 那个 `return` 会让整个 `AppShell`
+> 子树**退出组合**，而 `NetworkScreen` 的 `browsing`、目录浏览路径、列表滚动位置全是
+> `remember`，一撤就丢：于是「在某个 SMB 文件夹里播完片、退出后被打回主页」。
+>
+> 现在外壳**始终渲染**、`PlayerLayer` 叠在它上面，状态原封不动，退出播放直接回到原处。
+> 代价是底层页面在播放期间仍会重组（对静态列表页可接受）。焦点不受影响：`PlayerScreen`
+> 是整屏 `focusable()` 且内部会抢焦点，外壳那个返回键的 `BackHandler` 也在播放时
+> `enabled = false`。
 
 ### 播放页键位映射
 
