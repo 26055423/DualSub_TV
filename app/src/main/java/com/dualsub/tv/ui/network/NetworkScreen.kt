@@ -94,9 +94,6 @@ fun NetworkScreen(
     var locations by remember { mutableStateOf<List<RemoteLocation>>(emptyList()) }
     var browsing by remember { mutableStateOf<RemoteLocation?>(null) }
     var form by remember { mutableStateOf<FormMode>(FormMode.Closed) }
-    var busy by remember { mutableStateOf(false) }
-    var discoveredDlna by remember { mutableStateOf<List<DlnaDevice>>(emptyList()) }
-    var message by remember { mutableStateOf<String?>(null) }
     var localNetworkOpen by remember { mutableStateOf(false) }
     var cloudOpen by remember { mutableStateOf(false) }
     var nasOpen by remember { mutableStateOf(false) }
@@ -142,6 +139,7 @@ fun NetworkScreen(
 
     fun remove(location: RemoteLocation) = persistAll(locations - location)
 
+    /** DLNA 设备没有账号可填 —— 扫到就直接存成一条位置并进去。 */
     fun openDlna(device: DlnaDevice) {
         val location = RemoteLocation(
             id = "dlna:${device.descriptionUrl}",
@@ -152,24 +150,7 @@ fun NetworkScreen(
             controlUrl = device.controlUrl
         )
         persistAll(locations.filterNot { it.id == location.id } + location)
-        discoveredDlna = discoveredDlna.filterNot { it.descriptionUrl == device.descriptionUrl }
         browsing = location
-    }
-
-    fun scanDlna() {
-        busy = true
-        discoveredDlna = emptyList()
-        message = "正在搜索局域网内的 DLNA 设备…"
-        scope.launch {
-            val found = services.dlnaDiscovery.discover()
-            discoveredDlna = found
-            busy = false
-            message = if (found.isEmpty()) {
-                "没有发现 DLNA 设备（请确认 NAS 已开启 DLNA / 媒体服务器）"
-            } else {
-                null
-            }
-        }
     }
 
     // ---------------------------------------------------------------- 子页分派
@@ -185,7 +166,7 @@ fun NetworkScreen(
         return
     }
 
-    // ---- 「本地网络」：进去就自动扫描，扫到的设备点一下回填主机名
+    // ---- 「本地网络」：进去就自动扫 SMB + DLNA，扫描结果全部落在那一页
     if (localNetworkOpen) {
         LocalNetworkScreen(
             services = services,
@@ -197,6 +178,19 @@ fun NetworkScreen(
             onOpenSaved = { location ->
                 localNetworkOpen = false
                 browsing = location
+            },
+            // SMB 的编辑 / 删除只在这一页 —— 主页那一行是子弹带，卡里没有按钮。
+            onEditSaved = { location ->
+                localNetworkOpen = false
+                form = FormMode.Edit(location)
+            },
+            onDeleteSaved = { location ->
+                services.smbPool.invalidate(location.host)
+                remove(location)
+            },
+            onOpenDlna = { device ->
+                localNetworkOpen = false
+                openDlna(device)
             },
             onManualAdd = {
                 localNetworkOpen = false
@@ -414,22 +408,12 @@ fun NetworkScreen(
     val cloudCount = locations.count { it.type in CLOUD_TYPES }
     val nasCount = locations.count { it.type == RemoteType.NAS }
     val webDavCount = locations.count { it.type == RemoteType.WEBDAV }
-    val dlnaCount = locations.count { it.type == RemoteType.DLNA }
 
     Column(modifier = Modifier.fillMaxSize()) {
         BeiPageHeader(
             title = "网络位置",
-            subtitle = "本地网络 · 云盘 · NAS · WebDAV · DLNA"
+            subtitle = "本地网络 · 云盘 · NAS · WebDAV"
         )
-
-        message?.let { text ->
-            Text(
-                text = text,
-                color = BeiGlass.TextSecondary,
-                fontSize = BeiDims.BodySize,
-                modifier = Modifier.padding(top = 8.dp)
-            )
-        }
 
         LazyColumn(
             modifier = Modifier.weight(1f),
@@ -470,89 +454,25 @@ fun NetworkScreen(
                             modifier = Modifier.width(SourceCardWidth)
                         ) { SourceIcon(kind = SourceKind.WebDav) }
                     }
-                    item {
-                        BeiIconCard(
-                            title = "DLNA",
-                            subtitle = when {
-                                busy -> "正在搜索…"
-                                dlnaCount > 0 -> "已保存 $dlnaCount 个设备"
-                                else -> "发现局域网媒体服务器"
-                            },
-                            onClick = { scanDlna() },
-                            modifier = Modifier.width(SourceCardWidth)
-                        ) { SourceIcon(kind = SourceKind.Dlna) }
-                    }
                 }
             }
 
             if (locations.isNotEmpty()) {
+                // 「已保存」用的是**子弹带小卡**（只管进入）—— 主页不是管理位置的地方，
+                // 编辑 / 删除 / 退出登录都在各自的子页里做（见 [SavedLocationCard] 的说明）。
                 item(key = "saved") {
-                    NetworkRow(title = "已保存 · ${locations.size}") {
+                    NetworkRow(title = "已保存 · ${locations.size}", gap = SavedRowGap) {
                         items(locations, key = { "saved-" + it.id }) { location ->
-                            LocationCard(
+                            SavedLocationCard(
                                 location = location,
-                                onOpen = { browsing = location },
-                                onEdit = when (location.type) {
-                                    RemoteType.SMB -> { { form = FormMode.Edit(location) } }
-                                    RemoteType.WEBDAV -> { { form = FormMode.WebDavEdit(location) } }
-                                    // NAS 的编辑要知道是哪一家 —— 从 id 里还原（见 [vendorOf]）。
-                                    RemoteType.NAS -> vendorOf(location)?.let { vendor ->
-                                        { form = FormMode.NasEdit(vendor, location) }
-                                    }
-                                    else -> null
-                                },
-                                onLogout = when (location.type) {
-                                    RemoteType.QUARK -> {
-                                        { services.quarkAuth.logout(); remove(location) }
-                                    }
-                                    RemoteType.BAIDU -> {
-                                        { services.baiduAuth.logout(); remove(location) }
-                                    }
-                                    RemoteType.ALI -> {
-                                        { services.aliAuth.logout(); remove(location) }
-                                    }
-                                    else -> null
-                                },
-                                onDelete = {
-                                    services.smbPool.invalidate(location.host)
-                                    remove(location)
-                                }
+                                onOpen = { browsing = location }
                             )
                         }
                     }
                 }
             }
 
-            if (discoveredDlna.isNotEmpty()) {
-                item(key = "dlna") {
-                    NetworkRow(title = "发现的 DLNA 设备 · ${discoveredDlna.size}") {
-                        items(discoveredDlna, key = { "dlna-" + it.descriptionUrl }) { device ->
-                            BeiCard(
-                                onClick = { openDlna(device) },
-                                modifier = Modifier.width(LocationCardWidth)
-                            ) {
-                                Text(
-                                    text = device.friendlyName,
-                                    color = BeiGlass.TextPrimary,
-                                    fontSize = BeiDims.CardTitleSize,
-                                    fontWeight = FontWeight.SemiBold,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                                Text(
-                                    text = "DLNA · ${device.host} · 点一下保存并进入",
-                                    color = BeiGlass.TextSecondary,
-                                    fontSize = BeiDims.CaptionSize,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-
-            if (locations.isEmpty() && discoveredDlna.isEmpty()) {
+            if (locations.isEmpty()) {
                 item(key = "empty") {
                     Text(
                         text = "还没有添加任何网络位置。片子在 NAS 上的话，点「本地网络」或「NAS」——" +
@@ -599,14 +519,3 @@ private fun upsertAccount(
         )
     return locations.filterNot { it.id == location.id } + location
 }
-
-/**
- * 从 `RemoteLocation.id` 里还原 NAS 品牌。
- *
- * id 形如 `nas:SYNOLOGY:http://192.168.1.252:5005` —— 品牌名嵌在里面，这样「编辑」才知道
- * 该回到哪一家的表单，而不必给 `RemoteType` 加四个语义完全相同的枚举值。
- */
-private fun vendorOf(location: RemoteLocation): NasVendor? = location.id
-    .removePrefix("nas:")
-    .substringBefore(':')
-    .let { name -> NasVendor.entries.firstOrNull { it.name == name } }

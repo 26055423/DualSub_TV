@@ -1,7 +1,9 @@
 package com.dualsub.tv.ui.shell
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -9,12 +11,14 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -22,10 +26,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -114,13 +121,19 @@ fun BeiCard(
         horizontal = BeiDims.CardPaddingH,
         vertical = BeiDims.CardPaddingV
     ),
+    onFocusedChange: ((Boolean) -> Unit)? = null,
     content: @Composable ColumnScope.() -> Unit
 ) {
     var focused by remember { mutableStateOf(false) }
 
     Surface(
         onClick = onClick,
-        modifier = modifier.onFocusChanged { focused = it.isFocused },
+        modifier = modifier.onFocusChanged {
+            focused = it.isFocused
+            // 焦点状态只有这里拿得到（在 Surface 内部），而卡片内容偶尔要跟着它做事
+            // —— `BeiIconCard` 要在聚焦时才把描述文字滚出来。所以往外递一份。
+            onFocusedChange?.invoke(it.isFocused)
+        },
         shape = ClickableSurfaceDefaults.shape(shape = CardShape),
         colors = ClickableSurfaceDefaults.colors(
             containerColor = BeiGlass.Glass,
@@ -152,12 +165,29 @@ fun BeiCard(
 }
 
 /**
- * 「大图标卡」：**居中一个大图标 + 名称（+ 一行小字状态）**。
+ * 「大图标卡」：**图标 + 一行文字**。
  *
- * 用它的理由：来源 / 入口这类卡片，用户认的是**图标**，不是那一行行文字说明。
- * 图标放大居中之后（[BeiDims.IconSourceCard] 56dp），隔三米扫一眼就能找到"网盘"在哪；
- * 状态留在名称下方一行小字里，需要时看得到，不需要时不抢戏。
+ * 那行文字平时是**标题**（"这张卡叫什么"），聚焦时换成**描述**并跑马灯
+ * （"它到底是什么"）—— 两者**字体、字号、字重、颜色完全一致**。
+ *
+ * ## 为什么描述和标题共用一行
+ *
+ * 第一版把描述做成"永远占一行、平时空白"：一排卡片是齐的，但那一行 16dp 白养着。
+ * 第二版让它浮在卡片顶部 —— 又得在顶上预留一条内边距，同样白养。
+ *
+ * 现在直接把那一行**复用**掉：同一行、同一套字体，聚焦时只是"内容换了"。好处有三 ——
+ * 卡片比前两版都矮（省下的高度给了图标，24 → 28dp）；不会出现"聚焦时卡片长高一截"
+ * 的抖动；而描述**必须**用主标题的字号 —— 用小一号的字，聚焦瞬间这张卡会显得矮了一截，
+ * 像换了一张卡，用同一套字体才只是"这一行的内容换了"。
+ *
+ * 信息没丢，只是从"一直摆着"改成"点到才说"：三米外看的是图标，
+ * 真要确认细节时，遥控器已经停在它上面了。
+ *
+ * **尺寸按 120dp 宽的卡片配**（见 `NetworkRows.SourceCardWidth`）：内边距与字距都收到
+ * 原来的一半左右；**字号保持在电视的舒适下限**（`BodySize` = 13sp），再往下就不是
+ * "卡片小"，而是三米外读不出字了。
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun BeiIconCard(
     onClick: () -> Unit,
@@ -166,35 +196,38 @@ fun BeiIconCard(
     modifier: Modifier = Modifier,
     icon: @Composable () -> Unit
 ) {
+    var focused by remember { mutableStateOf(false) }
+
     BeiCard(
         onClick = onClick,
         modifier = modifier,
-        padding = PaddingValues(horizontal = 16.dp, vertical = 20.dp)
+        padding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
+        onFocusedChange = { focused = it }
     ) {
         Column(
             modifier = Modifier.fillMaxWidth(),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(10.dp)
+            verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             icon()
+            // 标题与描述**共用同一行**：平时显示标题，聚焦时那一行换成描述跑马灯。
+            //
+            // 两者**字体、字号、字重、行高完全一致**（`BodySize` + SemiBold、同为 TextPrimary）。
+            // 描述若用小一号的字，聚焦瞬间这张卡会"矮一截"，看着像换了一张卡；
+            // 用主标题的字号，视觉上才只是"这一行的内容换了"。
+            val showingSubtitle = focused && !subtitle.isNullOrBlank()
             Text(
-                text = title,
+                text = if (showingSubtitle) subtitle!! else title,
                 color = BeiGlass.TextPrimary,
-                fontSize = 17.sp,
+                fontSize = BeiDims.BodySize,
                 fontWeight = FontWeight.SemiBold,
                 textAlign = TextAlign.Center,
                 maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-            // 状态永远占一行（即使是空串）：卡片高度一致，网格才不会参差。
-            Text(
-                text = subtitle.orEmpty(),
-                color = BeiGlass.TextSecondary,
-                fontSize = BeiDims.CaptionSize,
-                textAlign = TextAlign.Center,
-                maxLines = 2,
+                softWrap = false,
                 overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .then(if (showingSubtitle) Modifier.basicMarquee() else Modifier)
             )
         }
     }
@@ -371,8 +404,20 @@ fun BeiChoiceRow(
     }
 }
 
-/** 网络页的几类来源，用来选图标。 */
-enum class SourceKind { Smb, Nas, CloudDrive, WebDav, Dlna, Quark, Baidu, Ali, Scan }
+/**
+ * 网络页的几类来源，用来选图标。
+ *
+ * [Feiniu] / [Synology] / [Qnap] / [Ugreen] 是 NAS 四家的**品牌轮廓**：
+ * 「NAS」入口下要选品牌，品牌卡得一眼认得出是哪一家，所以四家各有一个图标。
+ * 注意**图标种类 ≠ 数据模型** —— `RemoteType` 仍然只有一个 `NAS`
+ * （四家的接入协议完全一样，只是显示不同，见 `network/nas/NasVendor.kt`）。
+ */
+enum class SourceKind {
+    Smb, Nas, CloudDrive, WebDav, Dlna,
+    Quark, Baidu, Ali,
+    Feiniu, Synology, Qnap, Ugreen,
+    Scan
+}
 
 /**
  * 来源图标：**玻璃圆角方块 + 香槟金符号**。
@@ -489,10 +534,117 @@ fun SourceIcon(kind: SourceKind, modifier: Modifier = Modifier, size: Dp = BeiDi
                         style = Stroke(width = stroke)
                     )
                 }
-                // 网盘三家：外圈 + 内芯（靠符号与名称区分，不靠颜色）
-                SourceKind.Quark, SourceKind.Baidu, SourceKind.Ali -> {
+                // ---- 网盘三家：各自一个品牌轮廓。
+                // ⚠️ 三家**都不画云** —— 上面已经有一个 WebDAV 的云，而百度 / 阿里的标志
+                // 核心本来就是云，全画成云就分不出来了。改用各家**非云**的关键部件：
+                // 夸克的折角、百度的熊掌、阿里的折面三角。
+                SourceKind.Quark -> {
                     drawCircle(ink, radius = w * 0.38f, style = Stroke(width = stroke))
-                    drawCircle(ink, radius = w * 0.13f)
+                    drawPath(
+                        Path().apply {
+                            moveTo(w * 0.30f, h * 0.62f)
+                            lineTo(w * 0.50f, h * 0.36f)
+                            lineTo(w * 0.70f, h * 0.62f)
+                        },
+                        ink, style = Stroke(width = stroke)
+                    )
+                }
+                // 百度网盘：熊掌 —— 一个掌垫 + 三趾。三只圆点在任何尺寸下都认得出。
+                SourceKind.Baidu -> {
+                    drawCircle(
+                        color = ink, radius = w * 0.20f,
+                        center = Offset(w * 0.50f, h * 0.70f), style = Stroke(width = stroke)
+                    )
+                    drawCircle(
+                        color = ink, radius = w * 0.09f,
+                        center = Offset(w * 0.22f, h * 0.34f), style = Stroke(width = stroke)
+                    )
+                    drawCircle(
+                        color = ink, radius = w * 0.09f,
+                        center = Offset(w * 0.50f, h * 0.24f), style = Stroke(width = stroke)
+                    )
+                    drawCircle(
+                        color = ink, radius = w * 0.09f,
+                        center = Offset(w * 0.78f, h * 0.34f), style = Stroke(width = stroke)
+                    )
+                }
+                // 阿里云盘：正三角 + 中线（它的折面感），同样避开云。
+                SourceKind.Ali -> {
+                    drawPath(
+                        Path().apply {
+                            moveTo(w * 0.50f, h * 0.14f)
+                            lineTo(w * 0.88f, h * 0.80f)
+                            lineTo(w * 0.12f, h * 0.80f)
+                            close()
+                        },
+                        ink, style = Stroke(width = stroke)
+                    )
+                    drawLine(ink, Offset(w * 0.50f, h * 0.14f), Offset(w * 0.50f, h * 0.80f), stroke)
+                }
+                // ---- NAS 四家：品牌轮廓。
+                // 「NAS」子页那一排是要**选你是哪一家**，四家共用上面那个双格箱体不够用。
+                // 四家的标志形状差异够大，画成线条仍然分得开。
+                //
+                // 飞牛 fnOS：牛头 —— 一对上翘的角 + 圆角脸。四家里只有它是动物标，
+                // 也正因为如此，其余三家一律走"器物/字母"，不跟它抢。
+                SourceKind.Feiniu -> {
+                    drawPath(
+                        Path().apply {
+                            moveTo(w * 0.28f, h * 0.46f)
+                            lineTo(w * 0.72f, h * 0.46f)
+                            lineTo(w * 0.64f, h * 0.86f)
+                            lineTo(w * 0.36f, h * 0.86f)
+                            close()
+                        },
+                        ink, style = Stroke(width = stroke)
+                    )
+                    drawPath(
+                        Path().apply {
+                            moveTo(w * 0.28f, h * 0.58f)
+                            quadraticTo(w * 0.14f, h * 0.46f, w * 0.18f, h * 0.18f)
+                        },
+                        ink, style = Stroke(width = stroke)
+                    )
+                    drawPath(
+                        Path().apply {
+                            moveTo(w * 0.72f, h * 0.58f)
+                            quadraticTo(w * 0.86f, h * 0.46f, w * 0.82f, h * 0.18f)
+                        },
+                        ink, style = Stroke(width = stroke)
+                    )
+                }
+                // 群晖 DSM：圆环开一个口 + 中心实心方块。
+                SourceKind.Synology -> {
+                    drawArc(
+                        color = ink, startAngle = 40f, sweepAngle = 280f, useCenter = false,
+                        topLeft = Offset(w * 0.10f, h * 0.10f), size = Size(w * 0.80f, h * 0.80f),
+                        style = Stroke(width = stroke)
+                    )
+                    drawRect(
+                        color = ink,
+                        topLeft = Offset(w * 0.38f, h * 0.38f),
+                        size = Size(w * 0.24f, h * 0.24f)
+                    )
+                }
+                // 威联通 QTS：一个 Q（圆 + 右下斜尾）—— QNAP 的首字母，够简洁。
+                SourceKind.Qnap -> {
+                    drawCircle(
+                        color = ink, radius = w * 0.28f,
+                        center = Offset(w * 0.44f, h * 0.44f), style = Stroke(width = stroke)
+                    )
+                    drawLine(ink, Offset(w * 0.56f, h * 0.58f), Offset(w * 0.82f, h * 0.86f), stroke)
+                }
+                // 绿联：一个 U（它的名字首字母），底弧收圆。
+                SourceKind.Ugreen -> {
+                    drawPath(
+                        Path().apply {
+                            moveTo(w * 0.24f, h * 0.14f)
+                            lineTo(w * 0.24f, h * 0.60f)
+                            quadraticTo(w * 0.50f, h * 0.92f, w * 0.76f, h * 0.60f)
+                            lineTo(w * 0.76f, h * 0.14f)
+                        },
+                        ink, style = Stroke(width = stroke)
+                    )
                 }
                 // 雷达扫描
                 SourceKind.Scan -> {
@@ -500,6 +652,83 @@ fun SourceIcon(kind: SourceKind, modifier: Modifier = Modifier, size: Dp = BeiDi
                     drawLine(ink, Offset(w * 0.50f, h * 0.50f), Offset(w * 0.50f, h * 0.18f), stroke)
                     drawLine(ink, Offset(w * 0.50f, h * 0.50f), Offset(w * 0.78f, h * 0.64f), stroke)
                 }
+            }
+        }
+    }
+}
+
+/**
+ * 通用确认框：**半透明遮罩 + 居中玻璃面板 + 两个可聚焦按钮**。
+ *
+ * ## 与 `PlayerExitConfirmOverlay` 的关系
+ *
+ * 长相一致，但**不能共用** —— 那个是给播放页的「显示态」浮层：播放页整屏是一个自管按键的
+ * `focusable()`，按钮不在 Compose 焦点系统里，高亮靠一个布尔参数画出来。
+ * 外壳页面本来就是焦点驱动的，所以这一版用**真正的 `BeiPillButton`**，
+ * 遥控器自己就能在两项之间移动。
+ *
+ * 两条纪律在这里同样成立：
+ * - **默认焦点落在「取消」** —— 破坏性操作不该是落点；
+ * - **返回键等于取消**（由调用方的 `BackHandler` 处理），不必去够按钮。
+ *
+ * 面板底色用 `Glass`（外壳系的白玻璃），**不是**播放页那套 `Panel` 黑底 ——
+ * 后者是为了压在视频画面上（见 `UI_STYLE_REFERENCE.md` §四 的红线），
+ * 外壳底下本来就是我们自己铺的夜景，用白玻璃才对。
+ */
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+fun BeiConfirmDialog(
+    title: String,
+    message: String,
+    confirmLabel: String,
+    onConfirm: () -> Unit,
+    onCancel: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val shape = RoundedCornerShape(BeiDims.CardRadius)
+    val cancelFocus = remember { FocusRequester() }
+
+    // 焦点必须抢过来：确认框是叠在页面上的，不抢的话用户按 OK 会打到底层那个按钮上。
+    LaunchedEffect(Unit) { runCatching { cancelFocus.requestFocus() } }
+
+    Box(
+        modifier = modifier
+            .fillMaxSize()
+            .background(BeiGlass.Scrim),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            modifier = Modifier
+                .width(440.dp)
+                .clip(shape)
+                .background(BeiGlass.Glass)
+                .border(BeiDims.Border, BeiGlass.Border, shape)
+                .padding(horizontal = 28.dp, vertical = 24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Text(
+                text = title,
+                color = BeiGlass.TextPrimary,
+                fontSize = BeiDims.CardTitleSize,
+                fontWeight = FontWeight.Bold
+            )
+            Text(
+                text = message,
+                color = BeiGlass.TextSecondary,
+                fontSize = BeiDims.BodySize,
+                textAlign = TextAlign.Center
+            )
+            Row(
+                modifier = Modifier.padding(top = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
+                BeiPillButton(label = confirmLabel, onClick = onConfirm)
+                BeiPillButton(
+                    label = "取消",
+                    onClick = onCancel,
+                    modifier = Modifier.focusRequester(cancelFocus)
+                )
             }
         }
     }

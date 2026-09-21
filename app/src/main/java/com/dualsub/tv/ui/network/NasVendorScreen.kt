@@ -69,7 +69,7 @@ internal fun NasVendorScreen(
                                 subtitle = vendor.systemName,
                                 onClick = { onVendor(vendor) },
                                 modifier = Modifier.width(SourceCardWidth)
-                            ) { SourceIcon(kind = SourceKind.Nas) }
+                            ) { SourceIcon(kind = vendor.sourceKind) }
                         }
                     }
                 }
@@ -93,3 +93,18 @@ internal fun NasVendorScreen(
         }
     }
 }
+
+/**
+ * 品牌 → 图标。
+ *
+ * 映射写在 UI 层而不是 [NasVendor] 里：`SourceKind` 属于 `ui.shell`，让数据层
+ * （`network.nas`）反过来依赖 UI 会把依赖方向拧过来 —— 四家的接入协议完全一致，
+ * "长什么样"是纯展示问题。
+ */
+private val NasVendor.sourceKind: SourceKind
+    get() = when (this) {
+        NasVendor.FEINIU -> SourceKind.Feiniu
+        NasVendor.SYNOLOGY -> SourceKind.Synology
+        NasVendor.QNAP -> SourceKind.Qnap
+        NasVendor.UGREEN -> SourceKind.Ugreen
+    }
