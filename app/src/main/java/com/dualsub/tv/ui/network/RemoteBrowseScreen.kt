@@ -74,6 +74,7 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
 
 /**
  * 网络目录浏览。SMB 与 DLNA 共用这一页 —— 差别都被 [com.dualsub.tv.network.RemoteBrowser] 吸收掉了。
@@ -437,7 +438,7 @@ fun SmbServerForm(
             }
 
             item(key = "host") {
-                LabeledField("主机（IP 或主机名）", hostField, focusRequester = firstField) { hostField = it }
+                LabeledField("主机（IP 或主机名）", hostField, focusRequester = firstField, keyboardType = KeyboardType.Decimal) { hostField = it }
             }
 
             item(key = "username") {
@@ -522,6 +523,7 @@ private fun LabeledField(
     label: String,
     value: TextFieldValue,
     focusRequester: FocusRequester? = null,
+    keyboardType: KeyboardType = KeyboardType.Text,
     isPassword: Boolean = false,
     onValueChange: (TextFieldValue) -> Unit
 ) {
@@ -539,7 +541,7 @@ private fun LabeledField(
             } else {
                 VisualTransformation.None
             },
-            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+            keyboardOptions = KeyboardOptions(keyboardType = keyboardType, imeAction = ImeAction.Done),
             keyboardActions = KeyboardActions(onDone = { keyboard?.hide() }),
             modifier = Modifier
                 .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)

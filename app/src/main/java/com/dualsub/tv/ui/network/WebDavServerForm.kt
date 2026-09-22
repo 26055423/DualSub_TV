@@ -21,6 +21,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.Text
@@ -90,7 +91,8 @@ fun WebDavServerForm(
                 label = "服务器地址（URL）",
                 value = urlField,
                 onValueChange = { urlField = it },
-                focusRequester = firstField
+                focusRequester = firstField,
+                keyboardType = KeyboardType.Uri
             )
         }
         item(key = "displayName") {

@@ -22,6 +22,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.Text
@@ -165,14 +166,16 @@ internal fun NasServerForm(
                 label = "NAS 地址（IP 或主机名）",
                 value = hostField,
                 onValueChange = { hostField = it },
-                focusRequester = firstField
+                focusRequester = firstField,
+                keyboardType = KeyboardType.Decimal
             )
         }
         item(key = "port") {
             BeiTextField(
                 label = "端口（默认 ${vendor.httpPort} / ${vendor.httpsPort}）",
                 value = portField,
-                onValueChange = { portField = it }
+                onValueChange = { portField = it },
+                keyboardType = KeyboardType.Number
             )
         }
         item(key = "username") {

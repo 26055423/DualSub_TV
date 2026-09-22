@@ -25,6 +25,7 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.input.VisualTransformation
@@ -54,6 +55,7 @@ fun BeiTextField(
     value: TextFieldValue,
     onValueChange: (TextFieldValue) -> Unit,
     focusRequester: FocusRequester? = null,
+    keyboardType: KeyboardType = KeyboardType.Text,
     isPassword: Boolean = false
 ) {
     val keyboard = LocalSoftwareKeyboardController.current
@@ -66,7 +68,7 @@ fun BeiTextField(
             textStyle = TextStyle(color = BeiGlass.TextPrimary, fontSize = 16.sp),
             cursorBrush = SolidColor(BeiGlass.AccentBright),
             visualTransformation = if (isPassword) PasswordVisualTransformation() else VisualTransformation.None,
-            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+            keyboardOptions = KeyboardOptions(keyboardType = keyboardType, imeAction = ImeAction.Done),
             keyboardActions = KeyboardActions(onDone = { keyboard?.hide() }),
             modifier = Modifier
                 .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
