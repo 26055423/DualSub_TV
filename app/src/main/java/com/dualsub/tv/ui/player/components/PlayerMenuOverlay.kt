@@ -378,6 +378,13 @@ private fun MenuEntryRow(
                 color = if (adjustActive) BeiGlass.AccentBright else BeiGlass.TextPrimary,
                 modifier = Modifier.weight(1f)
             )
+            if (adjustActive) {
+                Text(
+                    text = "◉ 调节中  ",
+                    fontSize = 12.sp,
+                    color = BeiGlass.AccentBright
+                )
+            }
             Text(
                 text = if (adjustActive) "◀ ${entry.value} ▶" else "‹ ${entry.value} ›",
                 fontSize = 13.sp,

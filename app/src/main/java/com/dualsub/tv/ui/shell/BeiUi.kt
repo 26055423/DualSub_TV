@@ -264,13 +264,15 @@ fun BeiStaticCard(
 fun BeiPillButton(
     label: String,
     onClick: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true
 ) {
     val shape = RoundedCornerShape(50)
     var focused by remember { mutableStateOf(false) }
 
     Surface(
         onClick = onClick,
+        enabled = enabled,
         modifier = modifier.onFocusChanged { focused = it.isFocused },
         shape = ClickableSurfaceDefaults.shape(shape = shape),
         colors = ClickableSurfaceDefaults.colors(
@@ -279,7 +281,9 @@ fun BeiPillButton(
             focusedContainerColor = BeiGlass.AccentFillStrong,
             focusedContentColor = BeiGlass.AccentBright,
             pressedContainerColor = BeiGlass.AccentFillStrong,
-            pressedContentColor = BeiGlass.AccentBright
+            pressedContentColor = BeiGlass.AccentBright,
+            disabledContainerColor = BeiGlass.AccentFill.copy(alpha = 0.30f),
+            disabledContentColor = BeiGlass.AccentBright.copy(alpha = 0.40f)
         ),
         scale = ClickableSurfaceDefaults.scale(focusedScale = BeiMotion.FOCUS_SCALE)
     ) {

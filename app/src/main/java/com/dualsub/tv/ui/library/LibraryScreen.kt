@@ -24,6 +24,7 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -40,6 +41,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.Text
 import com.dualsub.tv.media.MediaLibraryScanner
@@ -86,6 +90,7 @@ fun LibraryScreen(
     }
     var videos by remember { mutableStateOf<List<VideoItem>>(emptyList()) }
     var scanning by remember { mutableStateOf(false) }
+    var scanError by remember { mutableStateOf<String?>(null) }
     var refreshToken by remember { mutableStateOf(0) }
 
     val permissionLauncher = rememberLauncherForActivityResult(
@@ -96,10 +101,27 @@ fun LibraryScreen(
         if (!granted) permissionLauncher.launch(permission)
     }
 
+    // ON_RESUME 时重新检查权限——用户去系统设置授权后返回 App 能立即生效
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                granted = ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
     LaunchedEffect(granted, refreshToken) {
         if (granted) {
             scanning = true
-            videos = withContext(Dispatchers.IO) { MediaLibraryScanner.scan(context) }
+            scanError = null
+            runCatching {
+                videos = withContext(Dispatchers.IO) { MediaLibraryScanner.scan(context) }
+            }.onFailure { e ->
+                scanError = "扫描失败：${e.message ?: "未知错误"}"
+            }
             scanning = false
         }
     }
@@ -123,6 +145,8 @@ fun LibraryScreen(
             !granted -> PermissionPrompt(onRequest = { permissionLauncher.launch(permission) })
 
             scanning -> StatusText("正在扫描媒体库…")
+
+            scanError != null -> StatusText(scanError!!, isError = true)
 
             videos.isEmpty() -> EmptyLibrary()
 
@@ -317,10 +341,10 @@ private fun EmptyLibrary() {
 }
 
 @Composable
-private fun StatusText(message: String) {
+private fun StatusText(message: String, isError: Boolean = false) {
     Text(
         text = message,
-        color = BeiGlass.TextSecondary,
+        color = if (isError) BeiGlass.Danger else BeiGlass.TextSecondary,
         fontSize = BeiDims.CardTitleSize,
         modifier = Modifier.padding(top = 26.dp)
     )

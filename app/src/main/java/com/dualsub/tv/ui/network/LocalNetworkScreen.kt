@@ -90,23 +90,31 @@ fun LocalNetworkScreen(
     var hosts by remember { mutableStateOf<List<String>>(emptyList()) }
     var devices by remember { mutableStateOf<List<DlnaDevice>>(emptyList()) }
     var message by remember { mutableStateOf<String?>(null) }
+    var error by remember { mutableStateOf<String?>(null) }
 
     fun scan() {
         if (scanning) return
         scanning = true
         message = null
+        error = null
         scope.launch {
-            // 两个 await 都要写出来：只 await 一个的话，另一个协程里抛的异常会被静默吞掉。
-            val smb = async { services.smbDiscovery.scan() }
-            val dlna = async { services.dlnaDiscovery.discover() }
-            hosts = smb.await()
-            devices = dlna.await()
+            runCatching {
+                // 两个 await 都要写出来：只 await 一个的话，另一个协程里抛的异常会被静默吞掉。
+                val smb = async { services.smbDiscovery.scan() }
+                val dlna = async { services.dlnaDiscovery.discover() }
+                hosts = smb.await()
+                devices = dlna.await()
+            }.onFailure { e ->
+                error = "扫描出错：${e.message ?: "未知错误"}。请检查网络连接后重试。"
+            }
             scanning = false
-            message = if (hosts.isEmpty() && devices.isEmpty()) {
-                "没发现 SMB（445 端口）也没有 DLNA 设备。请确认 NAS 已开启文件共享 / DLNA、" +
-                    "且与电视在同一网段；地址已知的话，点右上角「＋ 手动配置」直接填。"
-            } else {
-                null
+            if (error == null) {
+                message = if (hosts.isEmpty() && devices.isEmpty()) {
+                    "没发现 SMB（445 端口）也没有 DLNA 设备。请确认 NAS 已开启文件共享 / DLNA、" +
+                        "且与电视在同一网段；地址已知的话，点右上角「＋ 手动配置」直接填。"
+                } else {
+                    null
+                }
             }
         }
     }
@@ -126,7 +134,8 @@ fun LocalNetworkScreen(
             Spacer(modifier = Modifier.weight(1f))
             BeiPillButton(
                 label = if (scanning) "扫描中…" else "重新扫描",
-                onClick = { scan() }
+                onClick = { scan() },
+                enabled = !scanning
             )
             Spacer(modifier = Modifier.width(10.dp))
             BeiPillButton(label = "＋ 手动配置", onClick = onManualAdd)
@@ -152,6 +161,16 @@ fun LocalNetworkScreen(
                     Text(
                         text = text,
                         color = BeiGlass.TextMuted,
+                        fontSize = BeiDims.BodySize
+                    )
+                }
+            }
+
+            error?.let { text ->
+                item(key = "error") {
+                    Text(
+                        text = text,
+                        color = BeiGlass.Danger,
                         fontSize = BeiDims.BodySize
                     )
                 }

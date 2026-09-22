@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -25,6 +26,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -167,6 +170,9 @@ private fun BeiTopBar(
     current: ShellTab,
     onSelect: (ShellTab) -> Unit
 ) {
+    val firstTabFocus = remember { FocusRequester() }
+    LaunchedEffect(Unit) { runCatching { firstTabFocus.requestFocus() } }
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -186,11 +192,12 @@ private fun BeiTopBar(
         BrandMark()
         Spacer(modifier = Modifier.width(18.dp))
 
-        ShellTab.entries.forEach { tab ->
+        ShellTab.entries.forEachIndexed { index, tab ->
             TopTabItem(
                 tab = tab,
                 selected = tab == current,
-                onClick = { onSelect(tab) }
+                onClick = { onSelect(tab) },
+                focusRequester = if (index == 0) firstTabFocus else null
             )
             Spacer(modifier = Modifier.width(8.dp))
         }
@@ -264,7 +271,8 @@ private fun BrandMark() {
 private fun TopTabItem(
     tab: ShellTab,
     selected: Boolean,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    focusRequester: FocusRequester? = null
 ) {
     val shape = RoundedCornerShape(BeiDims.PanelRadius)
     var focused by remember { mutableStateOf(false) }
@@ -272,8 +280,6 @@ private fun TopTabItem(
     Surface(
         onClick = onClick,
         shape = ClickableSurfaceDefaults.shape(shape = shape),
-        // ⚠️ 容器色**全部留透明**，背景改由 content 里那一层自绘 —— 原因见上方注释。
-        // contentColor 也留保守值（TextSecondary），实际文字色在 content Box 里统一算。
         colors = ClickableSurfaceDefaults.colors(
             containerColor = Color.Transparent,
             contentColor = BeiGlass.TextSecondary,
@@ -283,7 +289,9 @@ private fun TopTabItem(
             pressedContentColor = BeiGlass.TextSecondary
         ),
         scale = ClickableSurfaceDefaults.scale(focusedScale = BeiMotion.FOCUS_SCALE),
-        modifier = Modifier.onFocusChanged { focused = it.isFocused }
+        modifier = Modifier
+            .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
+            .onFocusChanged { focused = it.isFocused }
     ) {
         Box {
             // 背景层、图标色、文字色三者**读同一个 focused State**，保证同帧更新。

@@ -68,6 +68,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
@@ -456,7 +457,8 @@ fun SmbServerForm(
                 ) {
                     BeiPillButton(
                         label = if (listing) "正在连接…" else "列出共享",
-                        onClick = { if (host.isNotBlank() && !listing) loadShares() }
+                        onClick = { if (host.isNotBlank() && !listing) loadShares() },
+                        enabled = host.isNotBlank() && !listing
                     )
                     if (shares.isNotEmpty()) {
                         Text(
@@ -504,7 +506,8 @@ fun SmbServerForm(
                     BeiPillButton(
                         label = "保存",
                         onClick = { if (canSave) save() },
-                        modifier = Modifier.focusRequester(saveFocus)
+                        modifier = Modifier.focusRequester(saveFocus),
+                        enabled = canSave
                     )
                     BeiPillButton(label = "取消", onClick = onCancel)
                 }
@@ -528,6 +531,7 @@ private fun LabeledField(
     onValueChange: (TextFieldValue) -> Unit
 ) {
     val keyboard = LocalSoftwareKeyboardController.current
+    var focused by remember { mutableStateOf(false) }
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Text(text = label, fontSize = BeiDims.BodySize, color = BeiGlass.TextSecondary)
         BasicTextField(
@@ -548,8 +552,13 @@ private fun LabeledField(
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(12.dp))
                 .background(BeiGlass.Glass)
-                .border(BeiDims.Border, BeiGlass.Border, RoundedCornerShape(12.dp))
+                .border(
+                    width = if (focused) BeiDims.BorderFocus else BeiDims.Border,
+                    color = if (focused) BeiGlass.AccentBorderStrong else BeiGlass.Border,
+                    shape = RoundedCornerShape(12.dp)
+                )
                 .padding(horizontal = 14.dp, vertical = 12.dp)
+                .onFocusChanged { focused = it.isFocused }
                 // 只在按 OK/Enter 时才弹出键盘，D-pad 移动焦点时不弹，可以自由跳过字段
                 .onKeyEvent { event ->
                     if (event.type == KeyEventType.KeyDown &&

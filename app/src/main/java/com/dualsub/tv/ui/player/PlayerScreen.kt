@@ -573,11 +573,11 @@ fun PlayerScreen(
                         val repeat = event.nativeKeyEvent.repeatCount
                         if (repeat == 0) {
                             viewModel.seekBy(-SEEK_STEP_MS)
-                            seekHint = "⏪ -10s"
+                            seekHint = "← -10s"
                         } else {
                             val step = longPressSeekMs(repeat)
                             viewModel.seekPreview(-step)
-                            seekHint = "⏪ -${step / 1000}s"
+                            seekHint = "← -${step / 1000}s"
                             previewTimeoutJob.value?.cancel()
                             previewTimeoutJob.value = previewTimeoutScope.launch {
                                 delay(PREVIEW_RELEASE_TIMEOUT_MS)
@@ -592,11 +592,11 @@ fun PlayerScreen(
                         val repeat = event.nativeKeyEvent.repeatCount
                         if (repeat == 0) {
                             viewModel.seekBy(SEEK_STEP_MS)
-                            seekHint = "⏩ +10s"
+                            seekHint = "→ +10s"
                         } else {
                             val step = longPressSeekMs(repeat)
                             viewModel.seekPreview(step)
-                            seekHint = "⏩ +${step / 1000}s"
+                            seekHint = "→ +${step / 1000}s"
                             previewTimeoutJob.value?.cancel()
                             previewTimeoutJob.value = previewTimeoutScope.launch {
                                 delay(PREVIEW_RELEASE_TIMEOUT_MS)
@@ -609,14 +609,14 @@ fun PlayerScreen(
 
                     Key.MediaFastForward -> {
                         viewModel.seekBy(SEEK_STEP_MS)
-                        seekHint = "⏩ +10s"
+                        seekHint = "→ +10s"
                         showControls = true
                         true
                     }
 
                     Key.MediaRewind -> {
                         viewModel.seekBy(-SEEK_STEP_MS)
-                        seekHint = "⏪ -10s"
+                        seekHint = "← -10s"
                         showControls = true
                         true
                     }
@@ -681,11 +681,11 @@ fun PlayerScreen(
                 secondaryLabel = secondary.label,
                 onSeekBackward = {
                     viewModel.seekBy(-SEEK_STEP_MS)
-                    seekHint = "⏪ -10s"
+                    seekHint = "← -10s"
                 },
                 onSeekForward = {
                     viewModel.seekBy(SEEK_STEP_MS)
-                    seekHint = "⏩ +10s"
+                    seekHint = "→ +10s"
                 },
                 onConfigurePrimary = {
                     pickForPrimary = true
@@ -859,7 +859,7 @@ fun PlayerScreen(
                                 .padding(horizontal = 18.dp, vertical = 12.dp)
                         ) {
                             Text(
-                                text = "👉 $suggestion",
+                                text = "> $suggestion",
                                 fontSize = 15.sp,
                                 color = BeiGlass.AccentBright,
                                 textAlign = TextAlign.Center

@@ -203,7 +203,8 @@ internal fun NasServerForm(
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 BeiPillButton(
                     label = if (connecting) "正在连接…" else "连接",
-                    onClick = { connect() }
+                    onClick = { connect() },
+                    enabled = !connecting
                 )
                 Spacer(Modifier.width(4.dp))
                 BeiPillButton(label = "取消", onClick = onCancel)

@@ -1,14 +1,19 @@
 package com.dualsub.tv.ui.network
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.ExperimentalTvMaterial3Api
@@ -18,6 +23,7 @@ import com.dualsub.tv.ui.shell.BeiIconCard
 import com.dualsub.tv.ui.shell.BeiPageHeader
 import com.dualsub.tv.ui.shell.SourceIcon
 import com.dualsub.tv.ui.shell.SourceKind
+import com.dualsub.tv.ui.theme.BeiGlass
 
 /**
  * 「云盘」子页：夸克 / 百度 / 阿里云盘。
@@ -67,7 +73,19 @@ fun CloudDriveScreen(
                             subtitle = if (quarkLoggedIn) "已登录" else "扫码登录",
                             onClick = { onCloud(RemoteType.QUARK) },
                             modifier = Modifier.width(SourceCardWidth)
-                        ) { SourceIcon(kind = SourceKind.Quark) }
+                        ) {
+                            Box {
+                                SourceIcon(kind = SourceKind.Quark)
+                                if (quarkLoggedIn) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(10.dp)
+                                            .align(Alignment.TopEnd)
+                                            .background(BeiGlass.Success, CircleShape)
+                                    )
+                                }
+                            }
+                        }
                     }
                     item {
                         BeiIconCard(
@@ -75,7 +93,19 @@ fun CloudDriveScreen(
                             subtitle = if (baiduLoggedIn) "已登录" else "设备码登录",
                             onClick = { onCloud(RemoteType.BAIDU) },
                             modifier = Modifier.width(SourceCardWidth)
-                        ) { SourceIcon(kind = SourceKind.Baidu) }
+                        ) {
+                            Box {
+                                SourceIcon(kind = SourceKind.Baidu)
+                                if (baiduLoggedIn) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(10.dp)
+                                            .align(Alignment.TopEnd)
+                                            .background(BeiGlass.Success, CircleShape)
+                                    )
+                                }
+                            }
+                        }
                     }
                     item {
                         BeiIconCard(
@@ -83,7 +113,19 @@ fun CloudDriveScreen(
                             subtitle = if (aliLoggedIn) "已登录" else "扫码登录",
                             onClick = { onCloud(RemoteType.ALI) },
                             modifier = Modifier.width(SourceCardWidth)
-                        ) { SourceIcon(kind = SourceKind.Ali) }
+                        ) {
+                            Box {
+                                SourceIcon(kind = SourceKind.Ali)
+                                if (aliLoggedIn) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(10.dp)
+                                            .align(Alignment.TopEnd)
+                                            .background(BeiGlass.Success, CircleShape)
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
             }
