@@ -125,7 +125,7 @@ fun LocalNetworkScreen(
     Column(modifier = Modifier.fillMaxSize()) {
         Row(
             modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically
+            verticalAlignment = Alignment.Bottom
         ) {
             BeiPageHeader(
                 title = "本地网络",

@@ -32,6 +32,7 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontWeight
@@ -99,7 +100,7 @@ fun BeiSectionTitle(text: String, modifier: Modifier = Modifier) {
         color = BeiGlass.TextSecondary,
         fontSize = 15.sp,
         fontWeight = FontWeight.SemiBold,
-        modifier = modifier.padding(top = 6.dp)
+        modifier = modifier
     )
 }
 
@@ -246,7 +247,7 @@ fun BeiStaticCard(
             .background(BeiGlass.Glass)
     ) {
         Column(
-            modifier = Modifier.padding(horizontal = 22.dp, vertical = 18.dp),
+            modifier = Modifier.padding(horizontal = BeiDims.CardPaddingH, vertical = BeiDims.CardPaddingV),
             verticalArrangement = Arrangement.spacedBy(8.dp),
             content = content
         )
@@ -265,7 +266,8 @@ fun BeiPillButton(
     label: String,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
-    enabled: Boolean = true
+    enabled: Boolean = true,
+    contentColor: Color = BeiGlass.AccentBright
 ) {
     val shape = RoundedCornerShape(50)
     var focused by remember { mutableStateOf(false) }
@@ -277,13 +279,13 @@ fun BeiPillButton(
         shape = ClickableSurfaceDefaults.shape(shape = shape),
         colors = ClickableSurfaceDefaults.colors(
             containerColor = BeiGlass.AccentFill,
-            contentColor = BeiGlass.AccentBright,
+            contentColor = contentColor,
             focusedContainerColor = BeiGlass.AccentFillStrong,
-            focusedContentColor = BeiGlass.AccentBright,
+            focusedContentColor = contentColor,
             pressedContainerColor = BeiGlass.AccentFillStrong,
-            pressedContentColor = BeiGlass.AccentBright,
+            pressedContentColor = contentColor,
             disabledContainerColor = BeiGlass.AccentFill.copy(alpha = 0.30f),
-            disabledContentColor = BeiGlass.AccentBright.copy(alpha = 0.40f)
+            disabledContentColor = contentColor.copy(alpha = 0.40f)
         ),
         scale = ClickableSurfaceDefaults.scale(focusedScale = BeiMotion.FOCUS_SCALE)
     ) {
@@ -698,7 +700,7 @@ fun BeiConfirmDialog(
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(BeiGlass.Scrim),
+            .background(BeiGlass.Night.copy(alpha = 0.82f)),
         contentAlignment = Alignment.Center
     ) {
         Column(

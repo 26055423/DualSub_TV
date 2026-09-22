@@ -134,7 +134,7 @@ internal fun LocationCard(
             BeiPillButton(label = "进入", onClick = onOpen)
             onEdit?.let { BeiPillButton(label = "编辑", onClick = it) }
             onLogout?.let { BeiPillButton(label = "退出登录", onClick = it) }
-            BeiPillButton(label = "删除", onClick = onDelete)
+            BeiPillButton(label = "删除", onClick = onDelete, contentColor = BeiGlass.Danger)
         }
     }
 }

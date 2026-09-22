@@ -52,6 +52,7 @@ import com.dualsub.tv.ui.format.formatTime
 import com.dualsub.tv.ui.shell.BeiCard
 import com.dualsub.tv.ui.shell.BeiPageHeader
 import com.dualsub.tv.ui.shell.BeiPillButton
+import com.dualsub.tv.ui.shell.BeiSectionTitle
 import com.dualsub.tv.ui.theme.BeiDims
 import com.dualsub.tv.ui.theme.BeiGlass
 import kotlinx.coroutines.Dispatchers
@@ -131,7 +132,7 @@ fun LibraryScreen(
     Column(modifier = Modifier.fillMaxSize()) {
         Row(
             modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically
+            verticalAlignment = Alignment.Bottom
         ) {
             BeiPageHeader(
                 title = "本地媒体库",
@@ -194,11 +195,8 @@ private fun LibraryRowSection(
     onOpenVideo: (VideoItem) -> Unit
 ) {
     Column {
-        Text(
+        BeiSectionTitle(
             text = "$title · ${videos.size}",
-            color = BeiGlass.TextSecondary,
-            fontSize = 15.sp,
-            fontWeight = FontWeight.SemiBold,
             modifier = Modifier.padding(bottom = 8.dp)
         )
         LazyRow(
@@ -335,7 +333,7 @@ private fun EmptyLibrary() {
             text = "片子都在 NAS 或电脑共享里的话，请在顶部「网络」里添加 SMB 服务器；" +
                 "插了 U 盘可以点右上角「重新扫描」让系统重新索引。",
             color = BeiGlass.TextMuted,
-            fontSize = 14.sp
+            fontSize = BeiDims.BodySize
         )
     }
 }

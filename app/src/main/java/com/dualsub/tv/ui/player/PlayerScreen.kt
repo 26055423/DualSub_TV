@@ -838,7 +838,7 @@ fun PlayerScreen(
                     verticalArrangement = Arrangement.spacedBy(14.dp)
                 ) {
                     Text(
-                        text = "⚠ ${failure.title}",
+                        text = failure.title,
                         fontSize = 26.sp,
                         fontWeight = FontWeight.Bold,
                         color = BeiGlass.Danger,
@@ -933,7 +933,7 @@ fun PlayerScreen(
                         .background(BeiGlass.Panel, RoundedCornerShape(6.dp))
                         .padding(horizontal = 14.dp, vertical = 8.dp)
                 ) {
-                    Text(text = "ℹ $infoText", fontSize = 14.sp, color = BeiGlass.Warning)
+                    Text(text = infoText, fontSize = 14.sp, color = BeiGlass.Warning)
                 }
             }
         }

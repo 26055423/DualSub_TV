@@ -1,5 +1,6 @@
 package com.dualsub.tv.ui.player.components
 
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -22,6 +23,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -176,7 +178,7 @@ fun PlayerMenuOverlay(
                     modifier = Modifier
                         .fillMaxSize()
                         .padding(horizontal = 18.dp, vertical = 16.dp),
-                    verticalArrangement = Arrangement.spacedBy(1.dp)
+                    verticalArrangement = Arrangement.spacedBy(3.dp)
                 ) {
                     item(key = "panelTitle") {
                         Text(
@@ -222,8 +224,8 @@ fun PlayerMenuOverlay(
             ) {
                 Text(
                     text = title,
-                    fontSize = 11.sp,
-                    color = BeiGlass.TextMuted,
+                    fontSize = BeiDims.CaptionSize,
+                    color = BeiGlass.TextSecondary,
                     modifier = Modifier.padding(start = 8.dp, bottom = 6.dp),
                     maxLines = 2
                 )
@@ -322,11 +324,19 @@ private fun MenuEntryRow(
                 .padding(horizontal = 9.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(
-                text = if (entry.selected) "●" else "○",
-                fontSize = 12.sp,
-                color = if (highlighted) BeiGlass.AccentBright else BeiGlass.TextSecondary
-            )
+            val dotColor = if (highlighted) BeiGlass.AccentBright else BeiGlass.TextSecondary
+            Canvas(modifier = Modifier.size(8.dp)) {
+                val r = this.size.minDimension / 2f
+                if (entry.selected) {
+                    drawCircle(color = dotColor, radius = r)
+                } else {
+                    drawCircle(
+                        color = dotColor,
+                        radius = r - 1.dp.toPx(),
+                        style = Stroke(width = 1.5.dp.toPx())
+                    )
+                }
+            }
             Box(modifier = Modifier.width(7.dp))
             Text(
                 text = entry.label,
@@ -380,10 +390,11 @@ private fun MenuEntryRow(
             )
             if (adjustActive) {
                 Text(
-                    text = "◉ 调节中  ",
+                    text = "调节中",
                     fontSize = 12.sp,
                     color = BeiGlass.AccentBright
                 )
+                Box(modifier = Modifier.width(6.dp))
             }
             Text(
                 text = if (adjustActive) "◀ ${entry.value} ▶" else "‹ ${entry.value} ›",
@@ -411,7 +422,7 @@ private fun MenuEntryRow(
             Text(
                 text = entry.label,
                 fontSize = 13.sp,
-                color = if (highlighted) BeiGlass.AccentBright else BeiGlass.Link,
+                color = if (highlighted) BeiGlass.AccentBright else BeiGlass.TextPrimary,
                 modifier = Modifier.weight(1f)
             )
             entry.detail?.let {

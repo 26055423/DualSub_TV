@@ -165,8 +165,8 @@ fun RemoteBrowseScreen(
 
         error?.let {
             Text(
-                text = "⚠ $it",
-                fontSize = 14.sp,
+                text = it,
+                fontSize = BeiDims.BodySize,
                 color = BeiGlass.Danger
             )
         }
@@ -174,14 +174,14 @@ fun RemoteBrowseScreen(
         when {
             loading -> Text(
                 text = "正在读取…",
-                fontSize = 15.sp,
+                fontSize = BeiDims.BodySize,
                 color = BeiGlass.TextSecondary,
                 modifier = Modifier.padding(top = 8.dp)
             )
 
             entries.isEmpty() && error == null -> Text(
                 text = "这个目录里没有可播放的内容。",
-                fontSize = 15.sp,
+                fontSize = BeiDims.BodySize,
                 color = BeiGlass.TextSecondary,
                 modifier = Modifier.padding(top = 8.dp)
             )
@@ -493,7 +493,7 @@ fun SmbServerForm(
 
             error?.let { message ->
                 item(key = "error") {
-                    Text(text = "⚠ $message", fontSize = 14.sp, color = BeiGlass.Danger)
+                    Text(text = message, fontSize = BeiDims.BodySize, color = BeiGlass.Danger)
                 }
             }
 
