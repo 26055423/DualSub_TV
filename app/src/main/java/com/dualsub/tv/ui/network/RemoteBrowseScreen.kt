@@ -35,7 +35,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Path
@@ -67,6 +66,14 @@ import com.dualsub.tv.ui.theme.BeiGlass
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.text.input.ImeAction
 
 /**
  * 网络目录浏览。SMB 与 DLNA 共用这一页 —— 差别都被 [com.dualsub.tv.network.RemoteBrowser] 吸收掉了。
@@ -316,6 +323,7 @@ fun SmbServerForm(
     val canSave = host.isNotBlank() && share.isNotBlank()
 
     val firstField = remember { FocusRequester() }
+    val saveFocus = remember { FocusRequester() }
     LaunchedEffect(Unit) {
         // 表单一打开就把焦点放到主机输入框，省得用户在整页里先找一遍
         runCatching { firstField.requestFocus() }
@@ -465,7 +473,11 @@ fun SmbServerForm(
                         items(shares, key = { it }) { name ->
                             BeiPillButton(
                                 label = if (name == share) "✓ $name" else name,
-                                onClick = { shareField = name.asFieldValueAtEnd() }
+                                onClick = {
+                                    shareField = name.asFieldValueAtEnd()
+                                    // 选好共享后直接把焦点给「保存」，跳过下方的共享名输入框
+                                    runCatching { saveFocus.requestFocus() }
+                                }
                             )
                         }
                     }
@@ -490,7 +502,8 @@ fun SmbServerForm(
                 ) {
                     BeiPillButton(
                         label = "保存",
-                        onClick = { if (canSave) save() }
+                        onClick = { if (canSave) save() },
+                        modifier = Modifier.focusRequester(saveFocus)
                     )
                     BeiPillButton(label = "取消", onClick = onCancel)
                 }
@@ -526,6 +539,8 @@ private fun LabeledField(
             } else {
                 VisualTransformation.None
             },
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+            keyboardActions = KeyboardActions(onDone = { keyboard?.hide() }),
             modifier = Modifier
                 .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
                 .fillMaxWidth()
@@ -533,8 +548,15 @@ private fun LabeledField(
                 .background(BeiGlass.Glass)
                 .border(BeiDims.Border, BeiGlass.Border, RoundedCornerShape(12.dp))
                 .padding(horizontal = 14.dp, vertical = 12.dp)
-                // 遥控器把焦点移到输入框时直接唤起软键盘，省掉「再按一次确认」的摸索
-                .onFocusChanged { if (it.isFocused) keyboard?.show() }
+                // 只在按 OK/Enter 时才弹出键盘，D-pad 移动焦点时不弹，可以自由跳过字段
+                .onKeyEvent { event ->
+                    if (event.type == KeyEventType.KeyDown &&
+                        (event.key == Key.DirectionCenter || event.key == Key.Enter)
+                    ) {
+                        keyboard?.show()
+                        false
+                    } else false
+                }
         )
     }
 }

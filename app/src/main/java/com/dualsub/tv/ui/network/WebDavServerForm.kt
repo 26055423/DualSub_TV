@@ -2,13 +2,14 @@ package com.dualsub.tv.ui.network
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -58,78 +59,89 @@ fun WebDavServerForm(
     val firstField = remember { FocusRequester() }
     LaunchedEffect(Unit) { runCatching { firstField.requestFocus() } }
 
-    Column(
+    LazyColumn(
         modifier = Modifier
             .fillMaxSize()
             .background(BeiGlass.Night)
-            .padding(
-                horizontal = BeiDims.ScreenStart,
-                vertical = BeiDims.ScreenVertical
-            ),
+            .imePadding(),
+        contentPadding = PaddingValues(
+            horizontal = BeiDims.ScreenStart,
+            vertical = BeiDims.ScreenVertical
+        ),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        Text(
-            text = if (initial == null) "添加 WebDAV 服务器" else "编辑 WebDAV 服务器",
-            fontSize = BeiDims.TitleSize,
-            fontWeight = FontWeight.Bold,
-            color = BeiGlass.TextPrimary
-        )
-        Text(
-            text = "支持 AList、Nextcloud、Nginx 等 WebDAV 服务；接飞牛 NAS 请用「飞牛 NAS」入口，不必手填端口。",
-            fontSize = BeiDims.BodySize,
-            color = BeiGlass.TextSecondary
-        )
-        Spacer(Modifier.height(4.dp))
-
-        BeiTextField(
-            label = "服务器地址（URL）",
-            value = urlField,
-            onValueChange = { urlField = it },
-            focusRequester = firstField
-        )
-        BeiTextField(
-            label = "显示名称（可选）",
-            value = displayNameField,
-            onValueChange = { displayNameField = it }
-        )
-        BeiTextField(
-            label = "用户名（匿名留空）",
-            value = usernameField,
-            onValueChange = { usernameField = it }
-        )
-        BeiTextField(
-            label = "密码（匿名留空）",
-            value = passwordField,
-            isPassword = true,
-            onValueChange = { passwordField = it }
-        )
-
-        Spacer(Modifier.height(4.dp))
-
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            BeiPillButton(
-                label = "保存",
-                onClick = {
-                    if (!canSave) return@BeiPillButton
-                    val url = urlField.text.trim().trimEnd('/')
-                    val name = displayNameField.text.trim().ifBlank {
-                        url.removePrefix("http://").removePrefix("https://")
-                    }
-                    val id = initial?.id ?: "webdav:${UUID.randomUUID()}"
-                    onSave(
-                        RemoteLocation(
-                            id = id,
-                            type = RemoteType.WEBDAV,
-                            displayName = name,
-                            host = url,
-                            username = usernameField.text.trim().takeIf { it.isNotBlank() },
-                            password = passwordField.text.trim().takeIf { it.isNotBlank() }
-                        )
-                    )
-                }
+        item(key = "title") {
+            Text(
+                text = if (initial == null) "添加 WebDAV 服务器" else "编辑 WebDAV 服务器",
+                fontSize = BeiDims.TitleSize,
+                fontWeight = FontWeight.Bold,
+                color = BeiGlass.TextPrimary
             )
-            Spacer(Modifier.width(4.dp))
-            BeiPillButton(label = "取消", onClick = onCancel)
+        }
+        item(key = "desc") {
+            Text(
+                text = "支持 AList、Nextcloud、Nginx 等 WebDAV 服务；接飞牛 NAS 请用「飞牛 NAS」入口，不必手填端口。",
+                fontSize = BeiDims.BodySize,
+                color = BeiGlass.TextSecondary
+            )
+        }
+        item(key = "url") {
+            BeiTextField(
+                label = "服务器地址（URL）",
+                value = urlField,
+                onValueChange = { urlField = it },
+                focusRequester = firstField
+            )
+        }
+        item(key = "displayName") {
+            BeiTextField(
+                label = "显示名称（可选）",
+                value = displayNameField,
+                onValueChange = { displayNameField = it }
+            )
+        }
+        item(key = "username") {
+            BeiTextField(
+                label = "用户名（匿名留空）",
+                value = usernameField,
+                onValueChange = { usernameField = it }
+            )
+        }
+        item(key = "password") {
+            BeiTextField(
+                label = "密码（匿名留空）",
+                value = passwordField,
+                isPassword = true,
+                onValueChange = { passwordField = it }
+            )
+        }
+        item(key = "actions") {
+            Spacer(Modifier.height(4.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                BeiPillButton(
+                    label = "保存",
+                    onClick = {
+                        if (!canSave) return@BeiPillButton
+                        val url = urlField.text.trim().trimEnd('/')
+                        val name = displayNameField.text.trim().ifBlank {
+                            url.removePrefix("http://").removePrefix("https://")
+                        }
+                        val id = initial?.id ?: "webdav:${UUID.randomUUID()}"
+                        onSave(
+                            RemoteLocation(
+                                id = id,
+                                type = RemoteType.WEBDAV,
+                                displayName = name,
+                                host = url,
+                                username = usernameField.text.trim().takeIf { it.isNotBlank() },
+                                password = passwordField.text.trim().takeIf { it.isNotBlank() }
+                            )
+                        )
+                    }
+                )
+                Spacer(Modifier.width(4.dp))
+                BeiPillButton(label = "取消", onClick = onCancel)
+            }
         }
     }
 }

@@ -2,13 +2,14 @@ package com.dualsub.tv.ui.network
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -123,73 +124,87 @@ internal fun NasServerForm(
         }
     }
 
-    Column(
+    LazyColumn(
         modifier = Modifier
             .fillMaxSize()
             .background(BeiGlass.Night)
-            .padding(
-                horizontal = BeiDims.ScreenStart,
-                vertical = BeiDims.ScreenVertical
-            ),
+            .imePadding(),
+        contentPadding = PaddingValues(
+            horizontal = BeiDims.ScreenStart,
+            vertical = BeiDims.ScreenVertical
+        ),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        Text(
-            text = if (initial == null) "接入${vendor.label}" else "编辑${vendor.label}",
-            fontSize = BeiDims.TitleSize,
-            fontWeight = FontWeight.Bold,
-            color = BeiGlass.TextPrimary
-        )
-        Text(
-            text = "${vendor.systemName}：先在「${vendor.enablePath}」开启 WebDAV，" +
-                "然后填下面的地址与账号即可 —— 端口已按该家默认值预填，探测会自动校正。",
-            fontSize = BeiDims.BodySize,
-            color = BeiGlass.TextSecondary
-        )
-        if (vendor.caveat.isNotBlank()) {
+        item(key = "title") {
             Text(
-                text = vendor.caveat,
-                fontSize = BeiDims.CaptionSize,
-                color = BeiGlass.TextMuted
+                text = if (initial == null) "接入${vendor.label}" else "编辑${vendor.label}",
+                fontSize = BeiDims.TitleSize,
+                fontWeight = FontWeight.Bold,
+                color = BeiGlass.TextPrimary
             )
         }
-        Spacer(Modifier.height(4.dp))
-
-        BeiTextField(
-            label = "NAS 地址（IP 或主机名）",
-            value = hostField,
-            onValueChange = { hostField = it },
-            focusRequester = firstField
-        )
-        BeiTextField(
-            label = "端口（默认 ${vendor.httpPort} / ${vendor.httpsPort}）",
-            value = portField,
-            onValueChange = { portField = it }
-        )
-        BeiTextField(
-            label = "用户名（${vendor.systemName} 的登录账号）",
-            value = usernameField,
-            onValueChange = { usernameField = it }
-        )
-        BeiTextField(
-            label = "密码",
-            value = passwordField,
-            isPassword = true,
-            onValueChange = { passwordField = it }
-        )
-
+        item(key = "desc") {
+            Text(
+                text = "${vendor.systemName}：先在「${vendor.enablePath}」开启 WebDAV，" +
+                    "然后填下面的地址与账号即可 —— 端口已按该家默认值预填，探测会自动校正。",
+                fontSize = BeiDims.BodySize,
+                color = BeiGlass.TextSecondary
+            )
+        }
+        if (vendor.caveat.isNotBlank()) {
+            item(key = "caveat") {
+                Text(
+                    text = vendor.caveat,
+                    fontSize = BeiDims.CaptionSize,
+                    color = BeiGlass.TextMuted
+                )
+            }
+        }
+        item(key = "host") {
+            BeiTextField(
+                label = "NAS 地址（IP 或主机名）",
+                value = hostField,
+                onValueChange = { hostField = it },
+                focusRequester = firstField
+            )
+        }
+        item(key = "port") {
+            BeiTextField(
+                label = "端口（默认 ${vendor.httpPort} / ${vendor.httpsPort}）",
+                value = portField,
+                onValueChange = { portField = it }
+            )
+        }
+        item(key = "username") {
+            BeiTextField(
+                label = "用户名（${vendor.systemName} 的登录账号）",
+                value = usernameField,
+                onValueChange = { usernameField = it }
+            )
+        }
+        item(key = "password") {
+            BeiTextField(
+                label = "密码",
+                value = passwordField,
+                isPassword = true,
+                onValueChange = { passwordField = it }
+            )
+        }
         error?.let { text ->
-            Text(text = text, fontSize = BeiDims.BodySize, color = BeiGlass.Danger)
+            item(key = "error") {
+                Text(text = text, fontSize = BeiDims.BodySize, color = BeiGlass.Danger)
+            }
         }
-
-        Spacer(Modifier.height(4.dp))
-
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            BeiPillButton(
-                label = if (connecting) "正在连接…" else "连接",
-                onClick = { connect() }
-            )
-            Spacer(Modifier.width(4.dp))
-            BeiPillButton(label = "取消", onClick = onCancel)
+        item(key = "actions") {
+            Spacer(Modifier.height(4.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                BeiPillButton(
+                    label = if (connecting) "正在连接…" else "连接",
+                    onClick = { connect() }
+                )
+                Spacer(Modifier.width(4.dp))
+                BeiPillButton(label = "取消", onClick = onCancel)
+            }
         }
     }
 }
