@@ -28,6 +28,8 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -84,6 +86,7 @@ fun AiSettingsScreen(
     val lanIp = remember { getLanIpAddress() }
     val serverUrl = if (lanIp != null) "http://$lanIp:${AiSubtitleConfigServer.PORT}" else null
     val scope = rememberCoroutineScope()
+    val returnFocus = remember { FocusRequester() }
 
     val qrBitmap: Bitmap? = remember(serverUrl) {
         serverUrl?.let { runCatching { generateQrBitmap(it, 400) }.getOrNull() }
@@ -94,6 +97,9 @@ fun AiSettingsScreen(
         runCatching { server.start() }
         onDispose { runCatching { server.stop() } }
     }
+
+    // 进入页面后确保焦点落在可操作元素上，避免不同 TV launcher 焦点飘移
+    LaunchedEffect(Unit) { runCatching { returnFocus.requestFocus() } }
 
     // 每次 configReceived 变化时短暂显示「已更新」提示
     var justSaved by remember { mutableStateOf(false) }
@@ -115,7 +121,7 @@ fun AiSettingsScreen(
                 subtitle = "用 OpenAI 兼容接口（默认阿里云百炼 Qwen-Omni）把外语片译成字幕；配置只存在电视本地"
             )
             Spacer(modifier = Modifier.weight(1f))
-            BeiPillButton(label = "返回", onClick = onBack)
+            BeiPillButton(label = "返回", onClick = onBack, modifier = Modifier.focusRequester(returnFocus))
         }
 
         Row(

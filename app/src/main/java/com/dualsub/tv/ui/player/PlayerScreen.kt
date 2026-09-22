@@ -1047,7 +1047,7 @@ private fun buildMenuGroups(
                 is com.dualsub.tv.ai.AiSubtitleState.Done -> "AI 已完成，点击重新生成"
                 is com.dualsub.tv.ai.AiSubtitleState.Failed -> "AI 失败：${s.reason.take(30)}"
                 is com.dualsub.tv.ai.AiSubtitleState.Live -> "AI 自动生成字幕（实时模式进行中）"
-                is com.dualsub.tv.ai.AiSubtitleState.LiveFailed -> "AI 自动生成字幕"
+                is com.dualsub.tv.ai.AiSubtitleState.LiveFailed -> "AI 批处理字幕（实时失败，点此改用）"
             }
             add(MenuEntry.Action(label = aiLabel, onClick = { viewModel.generateAiSubtitle() }))
 
