@@ -265,8 +265,8 @@ fun NetworkScreen(
     }
 
     // 表单打开时，返回键先把表单关掉（回到卡片行），而不是退出这一页
-    BackHandler {
-        if (form != FormMode.Closed) form = FormMode.Closed
+    BackHandler(enabled = form != FormMode.Closed) {
+        form = FormMode.Closed
     }
 
     // ---------------------------------------------------------------- 表单分派
