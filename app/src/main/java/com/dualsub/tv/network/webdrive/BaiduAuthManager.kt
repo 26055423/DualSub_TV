@@ -54,18 +54,16 @@ class BaiduAuthManager {
                 val session = api.getQrCode()
                 _state.value = BaiduAuthState.QrReady(session)
 
-                val maxAttempts = session.expiresIn / 3
-                repeat(maxAttempts) { attempt ->
-                    delay(3_000)
+                val maxAttempts = session.expiresIn / session.interval
+                repeat(maxAttempts) { _ ->
+                    delay(session.interval * 1000L)
                     when (val status = api.pollQrStatus(session.qrcodeKey)) {
                         is BaiduQrStatus.Waiting -> Unit
-                        is BaiduQrStatus.Scanned -> _state.value = BaiduAuthState.Scanned
                         is BaiduQrStatus.Authorized -> {
-                            val token = api.exchangeToken(status.code)
-                            accessToken = token.accessToken
-                            refreshToken = token.refreshToken
-                            _state.value = BaiduAuthState.LoggedIn(token.accessToken)
-                            onSuccess(token.accessToken, token.refreshToken)
+                            accessToken = status.accessToken
+                            refreshToken = status.refreshToken
+                            _state.value = BaiduAuthState.LoggedIn(status.accessToken)
+                            onSuccess(status.accessToken, status.refreshToken)
                             return@launch
                         }
                         is BaiduQrStatus.Denied -> {
@@ -113,6 +111,5 @@ sealed class BaiduAuthState {
     data object LoggedOut : BaiduAuthState()
     data object Loading : BaiduAuthState()
     data class QrReady(val session: BaiduQrSession) : BaiduAuthState()
-    data object Scanned : BaiduAuthState()
     data class LoggedIn(val accessToken: String) : BaiduAuthState()
 }

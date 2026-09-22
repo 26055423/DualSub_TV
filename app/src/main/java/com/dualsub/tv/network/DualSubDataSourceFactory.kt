@@ -101,15 +101,11 @@ private class DualSubDataSource(
                     }
                 }.getOrElse { throw IOException("百度直链获取失败：${it.message}", it) }
                 Log.i(TAG, "百度 dlink：$dlink")
-                // 百度 dlink 需要 Authorization 头，用 buildUpon() 继承原 DataSpec 并追加
+                // 百度 dlink 要求 access_token 放 URL 参数，不能放 Authorization 头
+                val dlinkWithToken = "$dlink&access_token=${baiduAuth.accessToken}"
                 dataSpec.buildUpon()
-                    .setUri(android.net.Uri.parse(dlink))
-                    .setHttpRequestHeaders(
-                        mapOf(
-                            "User-Agent" to BaiduApiClient.BAIDU_UA,
-                            "Authorization" to "Bearer ${baiduAuth.accessToken}"
-                        )
-                    )
+                    .setUri(android.net.Uri.parse(dlinkWithToken))
+                    .setHttpRequestHeaders(mapOf("User-Agent" to BaiduApiClient.BAIDU_UA))
                     .build()
             }
 

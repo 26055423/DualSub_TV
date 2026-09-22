@@ -1,11 +1,16 @@
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.Properties
 
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
+}
+
+val localProps = Properties().apply {
+    rootProject.file("local.properties").takeIf { it.exists() }?.inputStream()?.use { load(it) }
 }
 
 android {
@@ -30,6 +35,12 @@ android {
             "String",
             "BUILD_TIME",
             "\"${SimpleDateFormat("MM-dd HH:mm:ss", Locale.getDefault()).format(Date())}\""
+        )
+        buildConfigField("String", "BAIDU_APP_KEY",
+            "\"${localProps.getProperty("baidu.appKey", "")}\""
+        )
+        buildConfigField("String", "BAIDU_APP_SECRET",
+            "\"${localProps.getProperty("baidu.appSecret", "")}\""
         )
         // libVLC 的 AAR 打包了全部 4 个 ABI 的 .so（AAR 本身就 83MB），不过滤的话
         // debug APK 会从 21MB 涨到 210MB。电视是 arm64，其余三个 ABI 纯属浪费。

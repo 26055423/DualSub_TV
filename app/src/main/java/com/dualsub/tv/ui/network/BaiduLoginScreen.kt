@@ -128,15 +128,6 @@ fun BaiduLoginScreen(
                     )
                 }
 
-                is BaiduAuthState.Scanned -> {
-                    Text(
-                        text = "已扫码，请在手机上确认授权…",
-                        fontSize = 18.sp,
-                        color = BeiGlass.Warning,
-                        textAlign = TextAlign.Center
-                    )
-                }
-
                 is BaiduAuthState.LoggedIn -> {
                     Text(
                         text = "授权成功！正在进入…",
