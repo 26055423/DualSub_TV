@@ -242,8 +242,8 @@ fun BeiStaticCard(
     Box(
         modifier = modifier
             .clip(CardShape)
-            .background(BeiGlass.Glass)
             .border(BeiDims.Border, BeiGlass.Border, CardShape)
+            .background(BeiGlass.Glass)
     ) {
         Column(
             modifier = Modifier.padding(horizontal = 22.dp, vertical = 18.dp),

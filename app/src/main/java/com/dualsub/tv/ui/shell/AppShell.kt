@@ -269,27 +269,28 @@ private fun TopTabItem(
     val shape = RoundedCornerShape(BeiDims.PanelRadius)
     var focused by remember { mutableStateOf(false) }
 
-    val labelColor = when {
-        selected || focused -> BeiGlass.AccentBright
-        else -> BeiGlass.TextSecondary
-    }
-
     Surface(
         onClick = onClick,
         shape = ClickableSurfaceDefaults.shape(shape = shape),
         // ⚠️ 容器色**全部留透明**，背景改由 content 里那一层自绘 —— 原因见上方注释。
+        // contentColor 也留保守值（TextSecondary），实际文字色在 content Box 里统一算。
         colors = ClickableSurfaceDefaults.colors(
             containerColor = Color.Transparent,
-            contentColor = labelColor,
+            contentColor = BeiGlass.TextSecondary,
             focusedContainerColor = Color.Transparent,
-            focusedContentColor = labelColor,
+            focusedContentColor = BeiGlass.TextSecondary,
             pressedContainerColor = Color.Transparent,
-            pressedContentColor = labelColor
+            pressedContentColor = BeiGlass.TextSecondary
         ),
         scale = ClickableSurfaceDefaults.scale(focusedScale = BeiMotion.FOCUS_SCALE),
         modifier = Modifier.onFocusChanged { focused = it.isFocused }
     ) {
         Box {
+            // 背景层、图标色、文字色三者**读同一个 focused State**，保证同帧更新。
+            // 早先 labelColor 在函数体里同步计算（用参数 selected），而 focused 来自
+            // onFocusChanged 异步回调——两条路径可能差一帧，切 Tab 时颜色会闪。
+            val tint = if (focused || selected) BeiGlass.AccentBright else BeiGlass.TextSecondary
+
             // 背景层：**只由 `focused` 驱动**
             Box(
                 modifier = Modifier
@@ -304,11 +305,11 @@ private fun TopTabItem(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(9.dp)
             ) {
-                TabGlyph(tab = tab, tint = labelColor)
+                TabGlyph(tab = tab, tint = tint)
 
                 Text(
                     text = tab.label,
-                    color = labelColor,
+                    color = tint,
                     fontSize = 16.sp,
                     // 加粗 = "当前就在这一页"，这是"选中"唯一保留的表达
                     fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal
